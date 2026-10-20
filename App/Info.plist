@@ -29,6 +29,10 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_remotepairing._tcp</string>
+	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Talks to the UI test runner and the phone's own services through the loopback VPN.</string>
 	<key>UIBackgroundModes</key>

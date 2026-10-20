@@ -1982,14 +1982,7 @@ impl XCUITestService {
         listener: &mut L,
         timeout: Option<std::time::Duration>,
     ) -> Result<(), IdeviceError> {
-        // 1. Session UUID + config path
-        let session_id = uuid::Uuid::new_v4();
-        let xctest_path = format!(
-            "/tmp/{}.xctestconfiguration",
-            session_id.to_string().to_uppercase()
-        );
-
-        // 2. iOS major version (needed for service selection and launch env)
+        // iOS major version (needed for service selection and launch env)
         let ios_major_version: u8 = {
             let mut lockdown = LockdownClient::connect(&*self.provider).await?;
             lockdown
@@ -2002,11 +1995,75 @@ impl XCUITestService {
                 .unwrap_or(16u8)
         };
 
-        // 3. Build XCTestConfiguration
+        let conns = connect_testmanagerd(&*self.provider, ios_major_version).await?;
+        run_session(conns, ios_major_version, cfg, listener, timeout).await
+    }
+
+    /// Same as [`run`](Self::run), over an RSD tunnel the caller already holds
+    /// (one made with remote pairing, say). No lockdown connection is made.
+    ///
+    /// patched in by iphone-computer-use: on iOS 27 lockdownd refuses
+    /// connections that come in through a loopback vpn, so the only way in
+    /// from the phone itself is a remote pairing tunnel.
+    pub async fn run_rsd<L: XCUITestListener>(
+        adapter: &mut crate::tcp::handle::AdapterHandle,
+        handshake: &RsdHandshake,
+        ios_major_version: u8,
+        cfg: TestConfig,
+        listener: &mut L,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<(), IdeviceError> {
+        let dvt = rsd_connect(
+            adapter,
+            handshake,
+            "com.apple.instruments.dtservicehub",
+            "dtservicehub",
+            true,
+        )
+        .await?;
+        let ctrl = rsd_connect(
+            adapter,
+            handshake,
+            TESTMANAGERD_RSD_SERVICE,
+            "testmanagerd-ctrl",
+            false,
+        )
+        .await?;
+        let main = rsd_connect(
+            adapter,
+            handshake,
+            TESTMANAGERD_RSD_SERVICE,
+            "testmanagerd-main",
+            false,
+        )
+        .await?;
+        let conns = TestManagerConnections {
+            ctrl,
+            main,
+            dvt,
+            rsd_handles: vec![adapter.clone()],
+        };
+        run_session(conns, ios_major_version, cfg, listener, timeout).await
+    }
+}
+
+async fn run_session<L: XCUITestListener>(
+    mut conns: TestManagerConnections,
+    ios_major_version: u8,
+    cfg: TestConfig,
+    listener: &mut L,
+    timeout: Option<std::time::Duration>,
+) -> Result<(), IdeviceError> {
+    {
+        // Session UUID + config path
+        let session_id = uuid::Uuid::new_v4();
+        let xctest_path = format!(
+            "/tmp/{}.xctestconfiguration",
+            session_id.to_string().to_uppercase()
+        );
+
         let xctest_config = cfg.build_xctest_configuration(session_id, ios_major_version)?;
 
-        // 4. Connect to testmanagerd (ctrl + main) and DVT
-        let mut conns = connect_testmanagerd(&*self.provider, ios_major_version).await?;
         let mut ctrl_proxy = TestManagerProxy::open(&mut conns.ctrl, ios_major_version).await?;
         let mut main_proxy = TestManagerProxy::open(&mut conns.main, ios_major_version).await?;
         let mut process_control = XCTestProcessControlChannel::open(&mut conns.dvt).await?;
@@ -2061,7 +2118,9 @@ impl XCUITestService {
 
         Ok(())
     }
+}
 
+impl XCUITestService {
     /// Starts an XCTest runner intended to host WebDriverAgent and waits
     /// until WDA responds on its device-side HTTP port.
     ///

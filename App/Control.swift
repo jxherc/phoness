@@ -99,8 +99,9 @@ final class Control {
         do {
             let data = try Data(contentsOf: url)
             let plist = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any]
-            guard plist?["HostPrivateKey"] != nil else {
-                message = "That file isn't a pairing file."
+            // a remote pairing file (setup.sh, stikpair). the old lockdown kind has HostPrivateKey
+            guard plist?["private_key"] != nil, plist?["identifier"] != nil else {
+                message = "That isn't a remote pairing file."
                 return
             }
             try FileManager.default.createDirectory(at: .applicationSupportDirectory, withIntermediateDirectories: true)
@@ -168,9 +169,13 @@ final class Control {
             let why = vpnError.map { " (\($0.localizedDescription))" } ?? ""
             return fail("No loopback VPN is on\(why). On a free Apple account, install LocalDevVPN from the App Store, turn it on, then try again.")
         }
+        guard let rpPort = await Self.remotePairingPort() else {
+            if Task.isCancelled { return }
+            return fail("Can't reach the phone's remote pairing service. It needs Wi-Fi on. Turn it on and try again.")
+        }
 
         Runner.token = UUID().uuidString
-        launcher_start(pairing.path, ddi.path, Runner.bundle, Runner.port, Runner.token)
+        launcher_start(pairing.path, ddi.path, Runner.bundle, rpPort, Runner.port, Runner.token)
 
         // the passcode prompt can take a while, give it 2 minutes
         for _ in 0..<240 {
@@ -215,18 +220,26 @@ final class Control {
     func loadApps() async {
         var list: [[String: String]] = []
         #if !targetEnvironment(simulator)
-        // without a loopback vpn, 10.7.0.1 isn't us. ask the runner instead
-        if let pairing = Self.pairingURL, await Tunnel.reachable() {
-            let json = await Task.detached { Self.take(launcher_apps(pairing.path)) }.value
-            if let arr = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [[String: String]] {
-                list = arr.filter { $0["type"] == "User" || $0["type"] == "System" }
-            }
+        // the launcher grabs the list while it starts the runner. empty when xcode started it
+        let json = Self.take(launcher_apps())
+        if let arr = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [[String: String]] {
+            list = arr.filter { $0["type"] == "User" || $0["type"] == "System" }
         }
         #endif
         if list.isEmpty, let res = try? await Runner.call("/apps"), let arr = res["list"] as? [[String: String]] {
             list = arr
         }
         apps = list.sorted { ($0["name"] ?? "") < ($1["name"] ?? "") }
+    }
+
+    // the phone's own remotepairingd, reached through the loopback vpn. it's nearly always
+    // on 49152. if not, bonjour knows (that asks for local network access the first time)
+    static func remotePairingPort() async -> UInt16? {
+        if await Tunnel.reachable(port: 49152) { return 49152 }
+        for port in await Bonjour.ports(of: "_remotepairing._tcp.", timeout: 3) where port != 49152 {
+            if await Tunnel.reachable(port: port) { return port }
+        }
+        return nil
     }
 
     nonisolated static func take(_ p: UnsafeMutablePointer<CChar>?) -> String {
@@ -269,7 +282,8 @@ enum Tunnel {
         throw Failure()
     }
 
-    // true when some loopback vpn (ours or LocalDevVPN) gets us to the phone's own lockdownd
+    // true when some loopback vpn (ours or LocalDevVPN) gets us to the phone itself.
+    // lockdownd still finishes the tcp handshake before it drops vpn clients, so 62078 works as a check
     static func reachable(host: String = "10.7.0.1", port: UInt16 = 62078, timeout: Double = 2) async -> Bool {
         await withCheckedContinuation { cont in
             Probe(host: host, port: port, cont: cont).start(timeout: timeout)
@@ -309,5 +323,39 @@ enum Tunnel {
 
     static func off() async {
         (try? await NETunnelProviderManager.loadAllFromPreferences())?.first?.connection.stopVPNTunnel()
+    }
+}
+
+// the ports a bonjour service type shows up on. lists other devices on the wifi too,
+// so callers check which one answers at 10.7.0.1
+@MainActor
+final class Bonjour: NSObject, NetServiceBrowserDelegate, NetServiceDelegate {
+    private let browser = NetServiceBrowser()
+    private var found: [NetService] = []
+    private var ports: Set<UInt16> = []
+
+    static func ports(of type: String, timeout: Double) async -> [UInt16] {
+        let b = Bonjour()
+        b.browser.delegate = b
+        b.browser.searchForServices(ofType: type, inDomain: "local.")
+        try? await Task.sleep(for: .seconds(timeout))
+        b.browser.stop()
+        b.found.forEach { $0.stop() }
+        return Array(b.ports)
+    }
+
+    // both get called on the main run loop, where the browser was made
+    nonisolated func netServiceBrowser(_ browser: NetServiceBrowser, didFind service: NetService, moreComing: Bool) {
+        MainActor.assumeIsolated {
+            found.append(service)
+            service.delegate = self
+            service.resolve(withTimeout: 2)
+        }
+    }
+
+    nonisolated func netServiceDidResolveAddress(_ sender: NetService) {
+        MainActor.assumeIsolated {
+            if sender.port > 0 { ports.insert(UInt16(sender.port)) }
+        }
     }
 }

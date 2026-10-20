@@ -1,6 +1,6 @@
 #!/bin/zsh
 # one time, with the iphone unlocked and trusting this mac (a cable is best):
-#   1. makes a pairing file so the phone can talk to its own lockdownd later
+#   1. makes a remote pairing file so the phone can open a tunnel to itself later
 #   2. copies the developer disk image out of xcode (has testmanagerd + XCTest)
 #   3. builds the app + runner for the phone and installs both
 #   4. puts the pairing file into the app's own storage on the phone
@@ -34,7 +34,8 @@ udid=${UDID:-$(xcrun devicectl list devices 2>/dev/null | awk '/iPhone/ && /phys
 echo "phone: $udid"
 
 echo "\n== pairing file"
-# a full paired-host credential for the phone, so it lives outside the app bundle and git
+# a paired-host credential for the phone, so it lives outside the app bundle and git.
+# older setups wrote a lockdown pairing file here, the tool replaces it
 mkdir -p .pairing && chmod 700 .pairing
 pairing=.pairing/$udid.plist
 (cd setup && cargo build --release --locked -q)
@@ -86,8 +87,9 @@ cat <<'MSG'
 done. on the phone:
   1. Settings > Privacy & Security > Developer Mode stays on
   2. open Agent, tap the model name, add your Anthropic API key (or sign in)
-  3. iPhone Control > Turn On. allow the VPN, then enter your passcode for "XCTest"
-  4. you can unplug now
+  3. keep wifi on, the phone's remote pairing service needs it
+  4. iPhone Control > Turn On. allow the VPN, then enter your passcode for "XCTest"
+  5. you can unplug now
 MSG
 if [[ "$FREE_ACCOUNT" == 1 ]]; then
   cat <<'MSG'

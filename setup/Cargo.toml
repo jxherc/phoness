@@ -3,14 +3,18 @@ name = "pairing"
 version = "0.1.0"
 edition = "2024"
 
-# runs on the mac once: writes a pairing file the phone can use to talk to itself
+# runs on the mac once: writes a remote pairing file the phone uses to reach itself
 
 [dependencies]
-idevice = { git = "https://github.com/jkcoxson/idevice", rev = "26a28f6a46b5d85a28043c2e62febfa394c8b0a6", default-features = false, features = [
+# same patched idevice copy the launcher uses
+idevice = { path = "../launcher/idevice", default-features = false, features = [
   "ring",
   "usbmuxd",
-  "pair",
+  "syslog_relay",
+  "tcp",
+  "core_device_proxy",
+  "remote_pairing",
+  "rsd",
+  "tunnel_tcp_stack",
 ] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-plist = "1"
-uuid = { version = "1", features = ["v4"] }
