@@ -1,0 +1,33 @@
+[package]
+name = "phone"
+version = "0.1.0"
+edition = "2024"
+
+# a mac tool. drives the phone over usb through coredevice: screenshot, tap, swipe,
+# type, buttons. same path xcode's device hub uses, so it works with the phone locked
+# (it can't get past the passcode, nothing in software can). no on-device app needed.
+
+[[bin]]
+name = "phone"
+path = "src/main.rs"
+
+[dependencies]
+# the same patched idevice copy the launcher uses
+idevice = { path = "../launcher/idevice", default-features = false, features = [
+  "ring",
+  "usbmuxd",
+  "tcp",
+  "core_device_proxy",
+  "core_device",
+  "display_stream",
+  "mobile_image_mounter",
+  "rsd",
+  "tunnel_tcp_stack",
+] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "time", "net"] }
+uuid = { version = "1", features = ["v4"] }
+plist = "1"
+serde_json = "1"
+
+[profile.release]
+opt-level = 2
