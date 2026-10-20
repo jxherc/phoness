@@ -2,8 +2,10 @@
 
 > [!WARNING]
 > this will need sideloading on iphone and a claude subscription (for now)
+>
+> not tested on a real iphone yet.
 
-an agent that runs on the iphone and drives any app on it. it looks at the screen, taps, types and swipes. after a one-time setup it's meant to need no computer at all, though the on-device start hasn't run on a real phone yet (see limits).
+an agent that runs on the iphone and drives any app on it. it looks at the screen, taps, types and swipes. after a one-time setup it's meant to need no computer at all.
 
 remake of [finn voorhees' demo](https://x.com/finnvoorhees/status/2108279639538012265).
 
