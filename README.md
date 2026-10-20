@@ -28,13 +28,22 @@ then with the phone plugged in and unlocked:
 
 it makes `App/Resources/Device/pairing.plist`, copies the developer disk image from xcode into `App/Resources/Device/DDI/`, builds, and installs the app and the runner. both files are gitignored.
 
-on the phone: open Agent, tap the model name, paste an anthropic api key, then iPhone Control > Turn On. allow the vpn and type your passcode when iOS asks for "XCTest".
+on the phone: open Agent, tap the model name, add an anthropic api key or use the experimental claude sign-in below, then iPhone Control > Turn On. allow the vpn and type your passcode when iOS asks for "XCTest".
+
+## claude sign-in
+
+in settings, tap **sign in with claude**, finish login in the browser, then return to the app and paste the full authorization code (including the `#` suffix) or callback URL. tap **finish sign-in**. the app stores tokens in this iphone's keychain and refreshes them before expiry. pending sign-ins survive closing settings or restarting the app and expire after ten minutes.
+
+oauth takes priority while signed in. **sign out** removes this app's saved tokens; it doesn't sign out of the browser or revoke other sessions. an existing api key stays saved and becomes active after signout. a rejected oauth request never silently switches to paid api access.
+
+this is an experimental compatibility flow using claude's public cli oauth client, not a registered third-party integration. [anthropic restricts subscription credentials to its own clients](https://code.claude.com/docs/en/legal-and-compliance), so login can succeed while chat requests are rejected. the app displays that rejection; it doesn't impersonate claude code. use an api key if your subscription is denied. the flow follows the [published oauth implementation](https://github.com/ex-machina-co/opencode-anthropic-auth/blob/main/src/auth.ts); it does not copy that project's request-identity rewriting.
 
 ## working on it
 
 - `xcodegen generate` after changing `project.yml`. the xcode project isn't committed.
 - in the simulator the vpn, the launcher and the background task don't work. run the runner with product > test (cmd+u) instead, the app finds it on localhost. the app only gets about 30 seconds in the background there.
 - `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL` in the scheme's environment skip typing the key, or point at a fake server.
+- `./scripts/test-auth.sh` runs oauth protocol and token lifecycle checks against synthetic responses, without using your keychain or a live account.
 
 ## limits
 
@@ -42,4 +51,4 @@ on the phone: open Agent, tap the model name, paste an anthropic api key, then i
 - each runner start asks for the passcode. ios drops the runner when the app's testmanagerd connection goes away, for example when the app gets killed. the next message starts it again.
 - the runner uses private api: `LSApplicationWorkspace` for the app list, and it skips xctest's wait-for-idle like webdriveragent does. a new xcode can break either.
 - the runner's http api wants a token that the app makes per start. started from xcode it has none.
-- api key only. claude subscription sign-in isn't wired up.
+- claude oauth login and refresh are implemented, but live subscription chat access is unverified and may be denied by anthropic.

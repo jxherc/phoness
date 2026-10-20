@@ -63,12 +63,7 @@ final class Agent {
     }
 
     private func loop() async {
-        // env var is for running from xcode without typing the key in
-        guard let key = Keychain.get("anthropic") ?? ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"], !key.isEmpty else {
-            items.append(Item(kind: .error, text: "Add your Anthropic API key in Settings."))
-            return
-        }
-        let claude = Claude(key: key, model: model)
+        let claude = Claude(model: model)
 
         // hard cap so a confused run can't go forever
         for _ in 0..<150 {

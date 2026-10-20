@@ -2,9 +2,21 @@ import Foundation
 
 // messages api over raw http + sse. there's no official swift sdk.
 // content blocks stay as plain json dicts so thinking/tool_use go back to the api untouched.
+@MainActor
 struct Claude {
-    var key: String
     var model: String
+    var auth: ClaudeAuth
+    var session: URLSession
+    private let usesOAuth: Bool
+
+    init(model: String, auth: ClaudeAuth? = nil, session: URLSession = .shared) {
+        let auth = auth ?? .shared
+        self.model = model
+        self.auth = auth
+        self.session = session
+        // A run must not switch billing methods when the user signs out mid-request.
+        usesOAuth = auth.isSignedIn
+    }
 
     enum Event {
         case text(String)
@@ -47,21 +59,30 @@ struct Claude {
         req.httpMethod = "POST"
         req.timeoutInterval = 300
         req.setValue("application/json", forHTTPHeaderField: "content-type")
-        req.setValue(key, forHTTPHeaderField: "x-api-key")
         req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        if fallbacks { req.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta") }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         var attempt = 0
+        var refreshed = false
+        var rejectedToken: String?
         while true {
             try Task.checkCancellation()
-            let (bytes, resp) = try await URLSession.shared.bytes(for: req)
+            let credential = try await auth.credential(rejectedToken: rejectedToken, useOAuth: usesOAuth)
+            rejectedToken = nil
+            credential.apply(to: &req, fallbacks: fallbacks)
+            let (bytes, resp) = try await session.bytes(for: req)
             let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
             if status == 200 { return try await read(bytes, on: on) }
 
             var data = Data()
             for try await b in bytes { data.append(b) }
             let msg = Self.errorMessage(data) ?? "http \(status)"
+
+            if status == 401, case .oauth(let token) = credential, !refreshed {
+                refreshed = true
+                rejectedToken = token
+                continue
+            }
 
             if status == 400, fallbacks, msg.lowercased().contains("fallback") {
                 Self.noFallbacks.insert(model)
@@ -72,6 +93,14 @@ struct Claude {
                 attempt += 1
                 try await Task.sleep(for: .seconds(Double(1 << attempt)))
                 continue
+            }
+            if case .oauth = credential {
+                if status == 401 {
+                    throw Failure(message: "claude rejected this session. sign out and sign in again in settings.")
+                }
+                if status == 403 || msg.localizedCaseInsensitiveContains("only authorized") {
+                    throw Failure(message: "claude denied subscription access for this app. \(msg)")
+                }
             }
             throw Failure(message: status == 401 ? "The API key was rejected. Check it in Settings." : msg)
         }

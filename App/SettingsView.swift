@@ -3,23 +3,117 @@ import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     @State private var control = Control.shared
+    @State private var auth = ClaudeAuth.shared
     @State private var key = Keychain.get("anthropic") ?? ""
+    @State private var loginCode = ""
+    @State private var loginError: String?
+    @State private var keyError: String?
     @AppStorage("model") private var model = Models.all[0].id
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
+                    if auth.isSignedIn {
+                        Text("signed in")
+                        Button("sign out", role: .destructive) {
+                            do {
+                                try auth.signOut()
+                                loginCode = ""
+                                loginError = nil
+                            } catch {
+                                loginError = error.localizedDescription
+                            }
+                        }
+                        .accessibilityIdentifier("claude.signOut")
+                    } else if auth.pendingLogin {
+                        Text("finish signing in in your browser, then paste the code here.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        SecureField("authorization code", text: $loginCode)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                            .disabled(auth.isExchanging)
+                            .accessibilityIdentifier("claude.code")
+                        Button {
+                            loginError = nil
+                            Task {
+                                do {
+                                    try await auth.finishSignIn(loginCode)
+                                    loginCode = ""
+                                } catch {
+                                    loginError = error.localizedDescription
+                                }
+                            }
+                        } label: {
+                            HStack {
+                                Text(auth.isExchanging ? "signing in…" : "finish sign in")
+                                if auth.isExchanging { ProgressView().controlSize(.small) }
+                            }
+                        }
+                        .disabled(auth.isExchanging || loginCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityIdentifier("claude.finish")
+                        if let url = auth.authorizationURL {
+                            Button("reopen browser") { openLogin(url) }
+                                .disabled(auth.isExchanging)
+                        }
+                        Button("cancel sign in", role: .cancel) {
+                            do {
+                                try auth.cancelSignIn()
+                                loginCode = ""
+                                loginError = nil
+                            } catch {
+                                loginError = error.localizedDescription
+                            }
+                        }
+                        .disabled(auth.isExchanging)
+                        .accessibilityIdentifier("claude.cancel")
+                    } else {
+                        Button("sign in with claude") {
+                            do {
+                                loginError = nil
+                                openLogin(try auth.beginSignIn())
+                            } catch {
+                                loginError = error.localizedDescription
+                            }
+                        }
+                        .accessibilityIdentifier("claude.signIn")
+                    }
+                    if let loginError {
+                        Text(loginError)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
+                } header: {
+                    Text("claude login")
+                } footer: {
+                    Text("experimental. anthropic may reject subscription access from this app, even after sign in.")
+                }
+
+                Section {
                     SecureField("sk-ant-…", text: $key)
                         .textContentType(.password)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
-                        .onChange(of: key) { Keychain.set("anthropic", key.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                        .onChange(of: key) {
+                            do {
+                                try Keychain.set("anthropic", key.trimmingCharacters(in: .whitespacesAndNewlines))
+                                keyError = nil
+                            } catch {
+                                keyError = error.localizedDescription
+                            }
+                        }
+                    if let keyError {
+                        Text(keyError)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
                 } header: {
                     Text("Anthropic API key")
                 } footer: {
-                    Text("Kept in the keychain on this iPhone.")
+                    Text("kept in the keychain on this iPhone. used when signed out of claude.")
                 }
 
                 Section("Agent") {
@@ -47,6 +141,14 @@ struct SettingsView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
+            }
+        }
+    }
+
+    private func openLogin(_ url: URL) {
+        openURL(url) { accepted in
+            if !accepted {
+                loginError = "couldn't open the browser. tap reopen browser to try again."
             }
         }
     }
