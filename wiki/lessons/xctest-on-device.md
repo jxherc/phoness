@@ -6,3 +6,4 @@
 - the runner links XCTest from /System/Developer/Library/Frameworks, which the personalized ddi provides. xcode 27's ddi has XCTest 25227 in both the personalized dmg and the cryptex.
 - `XCUIDevice.shared.system.openURL` is `open(_:)` in swift.
 - there's no public "which app is in front". the runner checks `.state == .runningForeground` over the last app and then the known list.
+- usbmuxd lists every device paired to the mac, ipads too, and wifi ones come and go. the pairing tool has to match the udid, never take the first one.

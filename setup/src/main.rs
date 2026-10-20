@@ -1,4 +1,4 @@
-// usage: cargo run --release -- <out.plist>
+// usage: cargo run --release -- <out.plist> [udid]
 // phone has to trust this mac. cable is best, wifi works if xcode already pairs over network.
 
 use idevice::{
@@ -10,12 +10,23 @@ use idevice::{
 #[tokio::main]
 async fn main() {
     let out = std::env::args().nth(1).unwrap_or("pairing.plist".into());
+    let want = std::env::args().nth(2);
 
     let mut mux = UsbmuxdConnection::default().await.expect("can't reach usbmuxd");
     let mut devs = mux.get_devices().await.expect("can't list devices");
+    if out == "--list" {
+        for d in &devs {
+            println!("{} {:?}", d.udid, d.connection_type);
+        }
+        return;
+    }
+    // an ipad paired to the same mac shows up here too, so match the udid when given
+    if let Some(want) = &want {
+        devs.retain(|d| &d.udid == want);
+    }
     // cable first
     devs.sort_by_key(|d| d.connection_type != Connection::Usb);
-    let dev = devs.into_iter().next().expect("no phone found. plug it in and unlock it");
+    let dev = devs.into_iter().next().expect("that phone isn't connected. plug it in and unlock it");
     println!("phone: {}", dev.udid);
 
     let provider = dev.to_provider(UsbmuxdAddr::default(), "agent-setup");

@@ -22,7 +22,7 @@ echo "phone: $udid"
 echo "\n== pairing file"
 mkdir -p $dev
 (cd setup && cargo build --release -q)
-setup/target/release/pairing $dev/pairing.plist
+setup/target/release/pairing $dev/pairing.plist $udid
 
 echo "\n== developer disk image"
 ddi=/Library/Developer/DeveloperDiskImages/iOS_DDI/Restore
