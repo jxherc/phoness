@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import NetworkExtension
 import Observation
 import Launcher
@@ -156,14 +157,17 @@ final class Control {
             return fail("The developer disk image is missing. Run scripts/setup.sh again.")
         }
 
+        // the built-in vpn needs a paid apple team. a free team builds without it (setup.sh
+        // FREE_ACCOUNT=1) and uses LocalDevVPN from the app store, which routes the same address
         message = "Turning on the VPN"
-        do {
-            try await Tunnel.on()
-        } catch {
-            if Task.isCancelled { return }
-            return fail("\(error.localizedDescription) Try Turn On again.")
-        }
+        var vpnError: Error?
+        do { try await Tunnel.on() } catch { vpnError = error }
         if Task.isCancelled { return }
+        guard await Tunnel.reachable() else {
+            if Task.isCancelled { return }
+            let why = vpnError.map { " (\($0.localizedDescription))" } ?? ""
+            return fail("No loopback VPN is on\(why). On a free Apple account, install LocalDevVPN from the App Store, turn it on, then try again.")
+        }
 
         Runner.token = UUID().uuidString
         launcher_start(pairing.path, ddi.path, Runner.bundle, Runner.port, Runner.token)
@@ -211,8 +215,8 @@ final class Control {
     func loadApps() async {
         var list: [[String: String]] = []
         #if !targetEnvironment(simulator)
-        // without the vpn, 10.7.0.1 isn't us. ask the runner instead
-        if let pairing = Self.pairingURL, await Tunnel.isConnected() {
+        // without a loopback vpn, 10.7.0.1 isn't us. ask the runner instead
+        if let pairing = Self.pairingURL, await Tunnel.reachable() {
             let json = await Task.detached { Self.take(launcher_apps(pairing.path)) }.value
             if let arr = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [[String: String]] {
                 list = arr.filter { $0["type"] == "User" || $0["type"] == "System" }
@@ -265,8 +269,42 @@ enum Tunnel {
         throw Failure()
     }
 
-    static func isConnected() async -> Bool {
-        (try? await NETunnelProviderManager.loadAllFromPreferences().first?.connection.status) == .connected
+    // true when some loopback vpn (ours or LocalDevVPN) gets us to the phone's own lockdownd
+    static func reachable(host: String = "10.7.0.1", port: UInt16 = 62078, timeout: Double = 2) async -> Bool {
+        await withCheckedContinuation { cont in
+            Probe(host: host, port: port, cont: cont).start(timeout: timeout)
+        }
+    }
+
+    // one tcp connect attempt. everything runs on its own serial queue, so it answers once
+    private final class Probe: @unchecked Sendable {
+        let q = DispatchQueue(label: "reach")
+        let conn: NWConnection
+        var cont: CheckedContinuation<Bool, Never>?
+
+        init(host: String, port: UInt16, cont: CheckedContinuation<Bool, Never>) {
+            conn = NWConnection(host: .init(host), port: .init(rawValue: port)!, using: .tcp)
+            self.cont = cont
+        }
+
+        func start(timeout: Double) {
+            conn.stateUpdateHandler = { state in
+                switch state {
+                case .ready: self.finish(true)
+                case .failed, .waiting: self.finish(false)
+                default: break
+                }
+            }
+            conn.start(queue: q)
+            q.asyncAfter(deadline: .now() + timeout) { self.finish(false) }
+        }
+
+        func finish(_ ok: Bool) {
+            guard let c = cont else { return }
+            cont = nil
+            conn.cancel()
+            c.resume(returning: ok)
+        }
     }
 
     static func off() async {

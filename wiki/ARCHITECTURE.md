@@ -14,7 +14,7 @@ you type -> App (Agent.swift) -> claude api (Claude.swift, sse)
 starting the runner on the phone (Control.swift -> launcher):
 
 ```
-Tunnel on (10.7.0.0 <-> 10.7.0.1 swap)
+Tunnel on (10.7.0.0 <-> 10.7.0.1 swap), or LocalDevVPN on a free team
 launcher_start -> lockdownd at 10.7.0.1 with the pairing file
                -> heartbeat (keeps the "wifi" client alive)
                -> mount personalized ddi if nothing's mounted

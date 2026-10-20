@@ -7,6 +7,9 @@
 # after this the mac isn't needed.
 #
 # more than one phone? UDID=<udid> ./scripts/setup.sh
+# free apple account (personal team)? FREE_ACCOUNT=1 ./scripts/setup.sh
+#   free teams can't sign the built-in vpn, so the build leaves its entitlement out
+#   and the app uses LocalDevVPN from the app store instead.
 set -e
 cd "$(dirname "$0")/.."
 dev=App/Resources/Device
@@ -59,8 +62,13 @@ echo "copied $dmg"
 
 echo "\n== build"
 xcodegen generate -q
+extra=()
+if [[ "$FREE_ACCOUNT" == 1 ]]; then
+  echo "free account: building without the built-in vpn"
+  extra=(CODE_SIGN_ENTITLEMENTS=)
+fi
 xcodebuild -project Agent.xcodeproj -scheme Agent -destination "platform=iOS,id=$udid" \
-  -derivedDataPath build -allowProvisioningUpdates -quiet build-for-testing
+  -derivedDataPath build -allowProvisioningUpdates -quiet "${extra[@]}" build-for-testing
 
 echo "\n== install"
 products=build/Build/Products/Debug-iphoneos
@@ -81,3 +89,11 @@ done. on the phone:
   3. iPhone Control > Turn On. allow the VPN, then enter your passcode for "XCTest"
   4. you can unplug now
 MSG
+if [[ "$FREE_ACCOUNT" == 1 ]]; then
+  cat <<'MSG'
+
+free account:
+  - install LocalDevVPN from the App Store and turn it on before step 3
+  - apps signed by a free account stop opening after 7 days. run this script again then
+MSG
+fi

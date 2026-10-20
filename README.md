@@ -1,5 +1,8 @@
 # iphone computer use
 
+> [!WARNING]
+> this will need sideloading on iphone and a claude subscription (for now)
+
 an agent that runs on the iphone and drives any app on it. it looks at the screen, taps, types and swipes. after a one-time setup it's meant to need no computer at all, though the on-device start hasn't run on a real phone yet (see limits).
 
 remake of [finn voorhees' demo](https://x.com/finnvoorhees/status/2108279639538012265).
@@ -9,7 +12,7 @@ remake of [finn voorhees' demo](https://x.com/finnvoorhees/status/21082796395380
 - `App/` the chat app. sends your message to claude over the messages api (streaming, raw http since there's no swift sdk) with four tools: `phone_look`, `phone_act`, `phone_apps`, `current_time`. while a reply runs it asks ios for a continued processing task (the "Replying" pill with a stop button), so it can keep working while other apps are in front.
 - `Runner/` a ui test that never finishes. it serves http on `127.0.0.1:8123`: `/look` (screenshot + readable elements with tap points), `/act` (tap, double_tap, long_press, swipe, type, key, home, open_app, open_url, wait), `/apps`, `/known`, `/status`, `/stop`. every request needs the `x-runner-token` header, and posts must be json. xctest is the one thing ios lets touch other apps.
 - `launcher/` rust static lib on top of [idevice](https://github.com/jkcoxson/idevice). it starts that runner on the phone itself: connects to the phone's own lockdownd through the vpn, mounts the developer disk image if needed, then launches the runner through testmanagerd. that's where the "Enter iPhone Passcode for XCTest" prompt comes from.
-- `Tunnel/` loopback packet tunnel. packets to `10.7.0.1` get src and dst swapped and go straight back in, so lockdownd thinks a paired computer is calling over wifi. same trick as localdevvpn and stosvpn, which stikdebug uses.
+- `Tunnel/` loopback packet tunnel. packets to `10.7.0.1` get src and dst swapped and go straight back in, so lockdownd thinks a paired computer is calling over wifi. same trick as localdevvpn and stosvpn, which stikdebug uses. on a free apple account the app uses localdevvpn instead (see setup).
 - `setup/` small mac tool, run once. makes the pairing file and turns on network connections for lockdownd. over a cable it pairs with its own host id, so the app's pairing is separate from the mac's.
 
 ## setup
@@ -18,7 +21,7 @@ you need:
 
 - xcode 27 and xcodegen
 - rust through rustup. `rust-toolchain.toml` pins the version and the ios targets, rustup fetches them on the first build
-- a paid developer account. the vpn needs the network extension entitlement
+- an apple account. a free one works: free teams can't sign the built-in vpn, so the app uses [LocalDevVPN](https://apps.apple.com/app/id6755608044) (free, app store) instead. a paid developer account lets it use its own
 - an iphone on ios 26 or later, with developer mode on, that trusts this mac
 
 the first build also downloads [idevice](https://github.com/jkcoxson/idevice) from github, pinned to one commit.
@@ -30,6 +33,14 @@ then with the phone plugged in and unlocked:
 ```bash
 ./scripts/setup.sh
 ```
+
+on a free account:
+
+```bash
+FREE_ACCOUNT=1 ./scripts/setup.sh
+```
+
+that build leaves out the vpn entitlement. install LocalDevVPN and turn it on before iPhone Control > Turn On. apps signed by a free account stop opening after 7 days, so run the script again then.
 
 it writes the pairing file to `.pairing/<udid>.plist` (readable only by you), copies the developer disk image from xcode into `App/Resources/Device/DDI/`, builds, installs the app and the runner, and then copies the pairing file into the app's own storage on the phone. the pairing file is a full paired-host credential for the phone, so it never goes into the app bundle or git, and the app keeps it out of backups. with more than one phone: `UDID=<udid> ./scripts/setup.sh`.
 
