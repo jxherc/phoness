@@ -183,6 +183,16 @@ final class Stub: URLProtocol, @unchecked Sendable {
             try check(failure.message.contains("denied subscription access") && failure.message.contains("only authorized"), "403 restriction explained")
         }
         try check(Stub.requests.count == 1 && Stub.requests[0].value(forHTTPHeaderField: "x-api-key") == nil, "403 never falls back to API key")
+        Stub.configureSequence(Array(repeating: (429, error("Error")), count: 5))
+        do {
+            _ = try await client(store, model: "rate-limited-model").send(system: "test", tools: [], messages: []) { _ in }
+            throw NSError(domain: "429 unexpectedly succeeded", code: 1)
+        } catch let failure as Claude.Failure {
+            try check(failure.message == "claude rate-limited this account (http 429). try again later.", "generic 429 explains account rate limit")
+        }
+        try check(Stub.requests.count == 5 && Stub.requests.allSatisfy {
+            $0.value(forHTTPHeaderField: "Authorization") == "Bearer old" && $0.value(forHTTPHeaderField: "x-api-key") == nil
+        }, "429 exhausts retries using OAuth without API fallback")
         // A run stays tied to its starting billing method through retries and tool turns.
         for status in [401, 400] {
             let signingOutStore = Store(); try signingOutStore.seed(expired: false)

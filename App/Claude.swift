@@ -95,6 +95,11 @@ struct Claude {
                 continue
             }
             if case .oauth = credential {
+                if status == 429 {
+                    let detail = msg.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let suffix = ["", "error", "http 429"].contains(detail.lowercased()) ? "" : " \(detail)"
+                    throw Failure(message: "claude rate-limited this account (http 429). try again later.\(suffix)")
+                }
                 if status == 401 {
                     throw Failure(message: "claude rejected this session. sign out and sign in again in settings.")
                 }

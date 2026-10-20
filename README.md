@@ -51,4 +51,4 @@ this is an experimental compatibility flow using claude's public cli oauth clien
 - each runner start asks for the passcode. ios drops the runner when the app's testmanagerd connection goes away, for example when the app gets killed. the next message starts it again.
 - the runner uses private api: `LSApplicationWorkspace` for the app list, and it skips xctest's wait-for-idle like webdriveragent does. a new xcode can break either.
 - the runner's http api wants a token that the app makes per start. started from xcode it has none.
-- claude oauth login and refresh are implemented, but live subscription chat access is unverified and may be denied by anthropic.
+- live claude oauth login and token refresh passed on 2026-10-20. the inference test received HTTP 429 (rate limited), so a successful subscription chat reply is still unverified.
