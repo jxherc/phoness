@@ -1,0 +1,16 @@
+[package]
+name = "pairing"
+version = "0.1.0"
+edition = "2024"
+
+# runs on the mac once: writes a pairing file the phone can use to talk to itself
+
+[dependencies]
+idevice = { git = "https://github.com/jkcoxson/idevice", rev = "26a28f6", default-features = false, features = [
+  "ring",
+  "usbmuxd",
+  "pair",
+] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+plist = "1"
+uuid = { version = "1", features = ["v4"] }

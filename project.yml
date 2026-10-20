@@ -1,0 +1,106 @@
+name: Agent
+options:
+  bundleIdPrefix: com.jxherc
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    DEVELOPMENT_TEAM: 7V8B3J5FZ5
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "5.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+targets:
+  Agent:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+        excludes:
+          - Resources
+      - path: App/Resources/Device
+        type: folder
+        buildPhase: resources
+        optional: true
+    dependencies:
+      - target: Tunnel
+    entitlements:
+      path: App/Agent.entitlements
+      properties:
+        com.apple.developer.networking.networkextension:
+          - packet-tunnel-provider
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Agent
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIBackgroundModes: [processing]
+        BGTaskSchedulerPermittedIdentifiers: [com.jxherc.agent.run.*]
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        NSLocalNetworkUsageDescription: Talks to the UI test runner and the phone's own services through the loopback VPN.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jxherc.agent
+        SWIFT_INCLUDE_PATHS: $(SRCROOT)/launcher/include
+        "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]": $(SRCROOT)/launcher/target/aarch64-apple-ios/release
+        "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": $(SRCROOT)/launcher/target/aarch64-apple-ios-sim/release
+        OTHER_LDFLAGS: [-llauncher]
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    preBuildScripts:
+      - name: Build launcher
+        script: ./scripts/build-launcher.sh
+        basedOnDependencyAnalysis: false
+
+  Tunnel:
+    type: app-extension
+    platform: iOS
+    sources: [Tunnel]
+    entitlements:
+      path: Tunnel/Tunnel.entitlements
+      properties:
+        com.apple.developer.networking.networkextension:
+          - packet-tunnel-provider
+    info:
+      path: Tunnel/Info.plist
+      properties:
+        CFBundleDisplayName: Agent Tunnel
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jxherc.agent.tunnel
+
+  Runner:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [Runner]
+    dependencies:
+      - target: Agent
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jxherc.agent.runner
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Agent
+
+schemes:
+  Agent:
+    build:
+      targets:
+        Agent: all
+        Runner: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets: [Runner]

@@ -1,0 +1,1 @@
+scripts/setup.sh puts pairing.plist and DDI/ here. both are device or machine specific, so git ignores them.
