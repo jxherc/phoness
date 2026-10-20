@@ -7,7 +7,9 @@ options:
 
 settings:
   base:
+    # change these two to build under your own team
     DEVELOPMENT_TEAM: 7V8B3J5FZ5
+    AGENT_BUNDLE_ID: com.jxherc.agent
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "5.0"
     TARGETED_DEVICE_FAMILY: "1"
@@ -44,13 +46,13 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         UIBackgroundModes: [processing]
-        BGTaskSchedulerPermittedIdentifiers: [com.jxherc.agent.run.*]
+        BGTaskSchedulerPermittedIdentifiers: [$(PRODUCT_BUNDLE_IDENTIFIER).run.*]
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         NSLocalNetworkUsageDescription: Talks to the UI test runner and the phone's own services through the loopback VPN.
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.jxherc.agent
+        PRODUCT_BUNDLE_IDENTIFIER: $(AGENT_BUNDLE_ID)
         SWIFT_INCLUDE_PATHS: $(SRCROOT)/launcher/include
         "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]": $(SRCROOT)/launcher/target/aarch64-apple-ios/release
         "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": $(SRCROOT)/launcher/target/aarch64-apple-ios-sim/release
@@ -79,7 +81,7 @@ targets:
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.jxherc.agent.tunnel
+        PRODUCT_BUNDLE_IDENTIFIER: $(AGENT_BUNDLE_ID).tunnel
 
   Runner:
     type: bundle.ui-testing
@@ -89,7 +91,7 @@ targets:
       - target: Agent
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.jxherc.agent.runner
+        PRODUCT_BUNDLE_IDENTIFIER: $(AGENT_BUNDLE_ID).runner
         GENERATE_INFOPLIST_FILE: YES
         TEST_TARGET_NAME: Agent
 
@@ -104,3 +106,6 @@ schemes:
     test:
       config: Debug
       targets: [Runner]
+      # lets the runner serve with the fixed "dev" token when started from xcode
+      environmentVariables:
+        RUNNER_DEV: "1"

@@ -185,14 +185,18 @@ struct ControlView: View {
                 Text("Starts a UI test runner on this iPhone through a local VPN, so the agent can see the screen and tap anywhere. iOS asks for your passcode each time it starts.")
             }
 
-            Section("Setup") {
+            Section {
                 LabeledContent("Pairing file") {
-                    Text(pairingState)
+                    Text(control.hasPairing ? "Ready" : "Missing")
                 }
                 Button(control.hasPairing ? "Replace Pairing File" : "Import Pairing File") { importing = true }
                 LabeledContent("Developer disk image") {
                     Text(Control.ddiDir == nil ? "Missing" : "Included")
                 }
+            } header: {
+                Text("Setup")
+            } footer: {
+                Text("scripts/setup.sh puts the pairing file here. Import one only if you made it some other way.")
             }
 
         }
@@ -202,6 +206,9 @@ struct ControlView: View {
             if case .success(let url) = result { control.importPairing(from: url) }
         }
         .task {
+            // setup.sh may have dropped a pairing file in while the app was running
+            Control.securePairing()
+            control.hasPairing = Control.pairingURL != nil
             // pick up a runner started from xcode
             if control.phase == .off, await Runner.alive() { _ = await control.ensureOn() }
         }
@@ -213,11 +220,6 @@ struct ControlView: View {
         #else
         control.hasPairing && Control.ddiDir != nil
         #endif
-    }
-
-    private var pairingState: String {
-        guard let url = Control.pairingURL else { return "Missing" }
-        return url == Control.importedPairing ? "Imported" : "Included"
     }
 }
 

@@ -2,7 +2,7 @@ import NetworkExtension
 
 // loopback vpn. packets to 10.7.0.1 get their src/dst swapped and go straight back in,
 // so the app can reach the phone's own lockdownd like a computer on wifi would.
-// same idea as stosvpn / localdevvpn.
+// same idea as stosvpn / localdevvpn, which stikdebug uses.
 final class PacketTunnelProvider: NEPacketTunnelProvider {
     override func startTunnel(options: [String: NSObject]?) async throws {
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
@@ -18,16 +18,20 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private func pump() {
         packetFlow.readPackets { [weak self] packets, protocols in
             guard let self else { return }
-            let flipped = packets.map { p -> Data in
-                // ipv4 only. swapping src/dst keeps every checksum valid
-                guard p.count >= 20, p[p.startIndex] >> 4 == 4 else { return p }
+            var out: [Data] = []
+            var outProtocols: [NSNumber] = []
+            for (p, proto) in zip(packets, protocols) {
+                // only ipv4 to 10.7.0.1 is routed here, anything else gets dropped.
+                // swapping src/dst keeps every checksum valid
+                guard p.count >= 20, p[p.startIndex] >> 4 == 4 else { continue }
                 var p = Data(p)
                 let src = p.subdata(in: 12..<16)
                 p.replaceSubrange(12..<16, with: p.subdata(in: 16..<20))
                 p.replaceSubrange(16..<20, with: src)
-                return p
+                out.append(p)
+                outProtocols.append(proto)
             }
-            self.packetFlow.writePackets(flipped, withProtocols: protocols)
+            if !out.isEmpty { self.packetFlow.writePackets(out, withProtocols: outProtocols) }
             self.pump()
         }
     }

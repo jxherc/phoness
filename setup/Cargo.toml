@@ -6,7 +6,7 @@ edition = "2024"
 # runs on the mac once: writes a pairing file the phone can use to talk to itself
 
 [dependencies]
-idevice = { git = "https://github.com/jkcoxson/idevice", rev = "26a28f6", default-features = false, features = [
+idevice = { git = "https://github.com/jkcoxson/idevice", rev = "26a28f6a46b5d85a28043c2e62febfa394c8b0a6", default-features = false, features = [
   "ring",
   "usbmuxd",
   "pair",

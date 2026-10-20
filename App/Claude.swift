@@ -29,6 +29,10 @@ struct Claude {
         var errorDescription: String? { message }
     }
 
+    static let flaky: Set<URLError.Code> = [
+        .timedOut, .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost, .dnsLookupFailed,
+    ]
+
     // flips if the api says this model doesn't take fallbacks
     @MainActor static var noFallbacks: Set<String> = []
 
@@ -75,7 +79,16 @@ struct Claude {
             let credential = try await auth.credential(rejectedToken: rejectedToken, useOAuth: usesOAuth)
             rejectedToken = nil
             credential.apply(to: &req, fallbacks: fallbacks)
-            let (bytes, resp) = try await session.bytes(for: req)
+            let bytes: URLSession.AsyncBytes
+            let resp: URLResponse
+            do {
+                (bytes, resp) = try await session.bytes(for: req)
+            } catch let e as URLError where Self.flaky.contains(e.code) && attempt < 3 {
+                // phone networks drop out, nothing was sent back yet so it's safe to retry
+                attempt += 1
+                try await Task.sleep(for: .seconds(Double(1 << attempt)))
+                continue
+            }
             let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
             if status == 200 { return try await read(bytes, on: on) }
 
@@ -93,10 +106,11 @@ struct Claude {
                 Self.noFallbacks.insert(model)
                 return try await send(system: system, tools: tools, messages: messages, on: on)
             }
-            // rate limit / overloaded: back off a few times
+            // rate limit / overloaded: back off a few times, the way the server asks if it says
             if [429, 500, 502, 503, 529].contains(status), attempt < 4 {
                 attempt += 1
-                try await Task.sleep(for: .seconds(Double(1 << attempt)))
+                let asked = (resp as? HTTPURLResponse)?.value(forHTTPHeaderField: "retry-after").flatMap(Double.init)
+                try await Task.sleep(for: .seconds(min(asked ?? Double(1 << attempt), 30)))
                 continue
             }
             if case .oauth = credential {
@@ -169,7 +183,17 @@ struct Claude {
                 break
             }
         }
-        return (blocks.filter { !$0.isEmpty }, stop)
+        return (Self.afterFallback(blocks.filter { !$0.isEmpty }), stop)
+    }
+
+    // when a fallback model takes over mid-answer, thinking and tool calls from the declined
+    // attempt must not be sent back or run. text and everything after the last switch stays.
+    static func afterFallback(_ blocks: [[String: Any]]) -> [[String: Any]] {
+        guard let cut = blocks.lastIndex(where: { $0["type"] as? String == "fallback" }) else { return blocks }
+        let declined: Set<String> = ["thinking", "redacted_thinking", "tool_use", "server_tool_use"]
+        return blocks.enumerated().compactMap { i, b in
+            i < cut && declined.contains(b["type"] as? String ?? "") ? nil : b
+        }
     }
 
     static func errorMessage(_ data: Data) -> String? {

@@ -60,6 +60,7 @@ enum Tools {
     ]
 
     static func run(_ name: String, _ input: [String: Any]) async -> Output {
+        if Task.isCancelled { return fail("Stopped by the user.") }
         switch name {
         case "current_time":
             let now = Date().formatted(.dateTime.weekday(.wide).day().month(.wide).year().hour().minute())
@@ -77,12 +78,11 @@ enum Tools {
             if let off = await needControl() { return off }
             do {
                 let res = try await Runner.call("/act", body: input)
-                if let err = res["error"] as? String {
-                    var out = await look(prefix: "That didn't work: \(err)\n\n")
-                    out.error = true
-                    return out
-                }
+                if let err = res["error"] as? String { return await failedAct(err) }
                 return await look(prefix: "Done.\n\n")
+            } catch let e as Runner.Failure where e.status == 400 {
+                // bad input from the model, show it the screen and what to fix
+                return await failedAct(e.message)
             } catch {
                 return fail("The runner didn't answer: \(error.localizedDescription)")
             }
@@ -91,10 +91,18 @@ enum Tools {
         }
     }
 
+    private static func failedAct(_ err: String) async -> Output {
+        var out = await look(prefix: "That didn't work: \(err)\n\n")
+        out.error = true
+        return out
+    }
+
     private static func needControl() async -> Output? {
         let c = Control.shared
         if await c.ensureOn() { return nil }
-        return fail("iPhone control isn't on. \(c.message) Tell the user to turn it on in Settings > iPhone Control.")
+        if Task.isCancelled { return fail("Stopped by the user.") }
+        let why = c.message.isEmpty ? "" : " (\(c.message))"
+        return fail("iPhone Control isn't on\(why). Tell the user to tap the model name at the top of the chat, then iPhone Control, and turn it on.")
     }
 
     private static func look(prefix: String = "") async -> Output {

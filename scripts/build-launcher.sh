@@ -17,4 +17,5 @@ fi
 unset SDKROOT LLVM_TARGET_TRIPLE_SUFFIX
 # match the app's minimum so ld doesn't complain about the c bits in ring
 export IPHONEOS_DEPLOYMENT_TARGET=26.0
-cargo build --release --target $target
+# --locked: build exactly what Cargo.lock says, never resolve something new mid-build
+cargo build --release --locked --target $target

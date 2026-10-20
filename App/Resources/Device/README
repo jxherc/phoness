@@ -1,1 +1,1 @@
-scripts/setup.sh puts pairing.plist and DDI/ here. both are device or machine specific, so git ignores them.
+scripts/setup.sh copies the developer disk image into DDI/ here. it comes from your xcode install, so git ignores it.

@@ -8,7 +8,7 @@ crate-type = ["staticlib"]
 
 [dependencies]
 # pinned to the commit this was written against
-idevice = { git = "https://github.com/jkcoxson/idevice", rev = "26a28f6", default-features = false, features = [
+idevice = { git = "https://github.com/jkcoxson/idevice", rev = "26a28f6a46b5d85a28043c2e62febfa394c8b0a6", default-features = false, features = [
   "ring",
   "tcp",
   "heartbeat",

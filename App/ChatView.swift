@@ -5,6 +5,8 @@ struct ChatView: View {
     @State private var draft = ""
     @State private var settings = false
     @State private var open: Set<UUID> = []
+    // only follow new messages when the user is already at the bottom
+    @State private var atBottom = true
     @FocusState private var typing: Bool
 
     var body: some View {
@@ -21,12 +23,17 @@ struct ChatView: View {
                         }
                         row(item, after: i > 0 ? agent.items[i - 1] : nil)
                     }
-                    if agent.running, agent.items.last?.kind != .assistant {
-                        HStack {
-                            Dots()
+                    // shown the whole run except while text is streaming in, which is its own sign of life
+                    if agent.running, agent.status != "Writing" {
+                        HStack(spacing: 8) {
+                            Dots().accessibilityHidden(true)
+                            Text(Self.label(agent.status))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                             Spacer()
                         }
                         .padding(.top, 8)
+                        .accessibilityElement(children: .combine)
                         .transition(.opacity)
                     }
                     Color.clear.frame(height: 1).id("end")
@@ -36,8 +43,21 @@ struct ChatView: View {
             }
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
+            .onScrollGeometryChange(for: Bool.self) { g in
+                g.contentOffset.y + g.containerSize.height >= g.contentSize.height - 80
+            } action: { _, bottom in
+                atBottom = bottom
+            }
+            // no animation here, it fires on every streamed token
             .onChange(of: agent.items) {
-                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("end", anchor: .bottom) }
+                if atBottom { proxy.scrollTo("end", anchor: .bottom) }
+            }
+            .onChange(of: agent.items.count) { old, new in
+                // your own message always brings you down
+                if new > old, agent.items.last?.kind == .user {
+                    atBottom = true
+                    proxy.scrollTo("end", anchor: .bottom)
+                }
             }
             .onChange(of: typing) {
                 if typing { withAnimation { proxy.scrollTo("end", anchor: .bottom) } }
@@ -66,9 +86,11 @@ struct ChatView: View {
                         .background(Color(white: 0.36), in: .circle)
                     HStack(spacing: 2) {
                         Text(Models.name(agent.model))
+                            .lineLimit(1)
                         Image(systemName: "chevron.right")
                             .font(.system(size: 8, weight: .bold))
                             .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
                     }
                     .font(.caption)
                     .foregroundStyle(.white)
@@ -92,14 +114,17 @@ struct ChatView: View {
                     .glassEffect(.regular.interactive(), in: .circle)
             }
             .buttonStyle(.plain)
-            .opacity(agent.items.isEmpty ? 0.4 : 1)
-            .disabled(agent.items.isEmpty)
+            // starting over mid-run would mix the old run into the new chat
+            .opacity(agent.items.isEmpty || agent.running ? 0.4 : 1)
+            .disabled(agent.items.isEmpty || agent.running)
             .accessibilityLabel("New chat")
             .padding(.top, 3)
             .padding(.trailing, 16)
         }
         .padding(.top, 2)
         .padding(.bottom, 6)
+        // the header floats over the chat, so it stops growing at the big accessibility sizes
+        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
     }
 
     private var empty: some View {
@@ -108,7 +133,7 @@ struct ChatView: View {
                 .foregroundStyle(.secondary)
             Text("It can open apps, tap, type and scroll.")
                 .font(.footnote)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
         }
         .multilineTextAlignment(.center)
         .padding(.horizontal, 40)
@@ -138,13 +163,15 @@ struct ChatView: View {
             ToolRow(item: item, open: open.contains(item.id)) {
                 if open.contains(item.id) { open.remove(item.id) } else { open.insert(item.id) }
             }
-            .padding(.top, prev?.kind == .tool ? 2 : 10)
+            .padding(.top, prev?.kind == .tool ? 0 : 6)
         case .error:
             Label(item.text, systemImage: "exclamationmark.circle")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity)
                 .padding(.top, 10)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(item.text)
         }
     }
 
@@ -200,6 +227,12 @@ struct ChatView: View {
         .animation(.easeOut(duration: 0.15), value: agent.running)
     }
 
+    // "Running phone_act" reads better as "Using phone act"
+    static func label(_ status: String) -> String {
+        guard status.hasPrefix("Running ") else { return status.isEmpty ? "Working" : status }
+        return "Using " + status.dropFirst(8).replacingOccurrences(of: "_", with: " ")
+    }
+
     private func send() {
         guard !agent.running else { return }
         agent.send(draft)
@@ -238,26 +271,32 @@ struct ToolRow: View {
             Button(action: toggle) {
                 HStack(spacing: 4) {
                     Image(systemName: icon)
+                        .accessibilityHidden(true)
                     Text(item.text)
                     if !item.detail.isEmpty {
                         Image(systemName: "chevron.right")
                             .font(.system(size: 8, weight: .bold))
                             .rotationEffect(.degrees(open ? 90 : 0))
+                            .accessibilityHidden(true)
                     }
                 }
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                // looks compact, but the whole row width and 28pt of height take the tap
+                .frame(maxWidth: .infinity, minHeight: 28)
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
             .allowsHitTesting(!item.detail.isEmpty)
+            .accessibilityValue(item.detail.isEmpty ? "" : (open ? "expanded" : "collapsed"))
 
             if open, !item.detail.isEmpty {
                 Text(item.detail)
                     .font(.caption2.monospaced())
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .textSelection(.enabled)
+                    .padding(.bottom, 4)
             }
         }
         .frame(maxWidth: .infinity)

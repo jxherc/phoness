@@ -6,9 +6,23 @@ import Launcher
 // the runner is the ui test bundle (Runner target). it serves http on the phone's loopback.
 enum Runner {
     static let port: UInt16 = 8123
-    static let bundle = "com.jxherc.agent.runner.xctrunner"
-    // new one each time we launch the runner
-    nonisolated(unsafe) static var token = ""
+    // project.yml names the runner <app id>.runner, xcode adds .xctrunner
+    static let bundle = (Bundle.main.bundleIdentifier ?? "com.jxherc.agent") + ".runner.xctrunner"
+
+    struct Failure: LocalizedError {
+        var status: Int
+        var message: String
+        var errorDescription: String? { message }
+    }
+
+    // "dev" matches a runner started from xcode (RUNNER_DEV in the scheme).
+    // the launcher swaps in a fresh one each time it starts the runner.
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var current = "dev"
+    static var token: String {
+        get { lock.withLock { current } }
+        set { lock.withLock { current = newValue } }
+    }
 
     static func call(_ path: String, body: [String: Any]? = nil, timeout: Double = 60) async throws -> [String: Any] {
         var req = URLRequest(url: URL(string: "http://127.0.0.1:\(port)\(path)")!)
@@ -19,9 +33,15 @@ enum Runner {
             req.setValue("application/json", forHTTPHeaderField: "content-type")
             req.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
-        let (data, _) = try await URLSession.shared.data(for: req)
-        if let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] { return obj }
-        if let arr = try JSONSerialization.jsonObject(with: data) as? [Any] { return ["list": arr] }
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        let obj = try? JSONSerialization.jsonObject(with: data)
+        guard (200..<300).contains(status) else {
+            let msg = (obj as? [String: Any])?["error"] as? String ?? "runner answered http \(status)"
+            throw Failure(status: status, message: msg)
+        }
+        if let dict = obj as? [String: Any] { return dict }
+        if let arr = obj as? [Any] { return ["list": arr] }
         return [:]
     }
 
@@ -42,21 +62,34 @@ final class Control {
     static let shared = Control()
 
     private var job: Task<Void, Never>?
+    private var jobID: UUID?
 
-    init() { hasPairing = Self.pairingURL != nil }
+    init() {
+        Self.securePairing()
+        hasPairing = Self.pairingURL != nil
+    }
 
-    // imported file wins over one bundled by scripts/setup.sh
-    static var importedPairing: URL {
+    // scripts/setup.sh copies it here, or it comes in through Import Pairing File.
+    // it's a full paired-host credential for this phone, never bundled with the app.
+    static var pairingFile: URL {
         URL.applicationSupportDirectory.appending(path: "pairing.plist")
     }
 
     static var pairingURL: URL? {
-        if FileManager.default.fileExists(atPath: importedPairing.path) { return importedPairing }
-        return Bundle.main.url(forResource: "pairing", withExtension: "plist", subdirectory: "Device")
+        FileManager.default.fileExists(atPath: pairingFile.path) ? pairingFile : nil
     }
 
     static var ddiDir: URL? {
         Bundle.main.url(forResource: "DDI", withExtension: nil, subdirectory: "Device")
+    }
+
+    // keep it out of backups and unreadable while the phone is locked
+    static func securePairing() {
+        guard var url = pairingURL else { return }
+        try? FileManager.default.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: url.path)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? url.setResourceValues(values)
     }
 
     func importPairing(from url: URL) {
@@ -64,12 +97,14 @@ final class Control {
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         do {
             let data = try Data(contentsOf: url)
-            guard (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any] != nil else {
+            let plist = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any]
+            guard plist?["HostPrivateKey"] != nil else {
                 message = "That file isn't a pairing file."
                 return
             }
             try FileManager.default.createDirectory(at: .applicationSupportDirectory, withIntermediateDirectories: true)
-            try data.write(to: Self.importedPairing)
+            try data.write(to: Self.pairingFile, options: [.atomic, .completeFileProtection])
+            Self.securePairing()
             hasPairing = true
             message = ""
         } catch {
@@ -77,22 +112,32 @@ final class Control {
         }
     }
 
-    // safe to call a lot. returns once the runner answers or start failed.
+    // safe to call a lot. returns once the runner answers, start failed, or the caller got cancelled.
     func ensureOn() async -> Bool {
         if await Runner.alive() {
             if phase != .on || apps.isEmpty { await up() }
             return true
         }
+        // the agent got stopped while we checked, don't go popping passcode prompts
+        if Task.isCancelled { return false }
         if job == nil { start() }
-        await job?.value
+        while job != nil, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
         return phase == .on
     }
 
     func start() {
         guard job == nil else { return }
+        let id = UUID()
+        jobID = id
         job = Task {
             await run()
-            job = nil
+            // a stop + start while this one was finishing owns job now
+            if jobID == id {
+                job = nil
+                jobID = nil
+            }
         }
     }
 
@@ -104,11 +149,21 @@ final class Control {
         #if targetEnvironment(simulator)
         fail("In the simulator, start the runner from Xcode with Product > Test.")
         #else
-        guard let pairing = Self.pairingURL else { return fail("Import a pairing file first.") }
-        guard let ddi = Self.ddiDir else { return fail("The developer disk image is missing. Run scripts/setup.sh and rebuild.") }
+        guard let pairing = Self.pairingURL else {
+            return fail("No pairing file yet. Run scripts/setup.sh, or import one below.")
+        }
+        guard let ddi = Self.ddiDir else {
+            return fail("The developer disk image is missing. Run scripts/setup.sh again.")
+        }
 
         message = "Turning on the VPN"
-        do { try await Tunnel.on() } catch { return fail("VPN: \(error.localizedDescription)") }
+        do {
+            try await Tunnel.on()
+        } catch {
+            if Task.isCancelled { return }
+            return fail("\(error.localizedDescription) Try Turn On again.")
+        }
+        if Task.isCancelled { return }
 
         Runner.token = UUID().uuidString
         launcher_start(pairing.path, ddi.path, Runner.bundle, Runner.port, Runner.token)
@@ -123,7 +178,7 @@ final class Control {
             if await Runner.alive() { return await up() }
         }
         launcher_stop()
-        fail("The runner didn't start. Try again.")
+        fail("The runner didn't start in 2 minutes. Try Turn On again.")
         #endif
     }
 
@@ -143,6 +198,7 @@ final class Control {
     func stop() {
         job?.cancel()
         job = nil
+        jobID = nil
         Task { _ = try? await Runner.call("/stop", body: [:], timeout: 2) }
         #if !targetEnvironment(simulator)
         launcher_stop()
@@ -155,7 +211,8 @@ final class Control {
     func loadApps() async {
         var list: [[String: String]] = []
         #if !targetEnvironment(simulator)
-        if let pairing = Self.pairingURL {
+        // without the vpn, 10.7.0.1 isn't us. ask the runner instead
+        if let pairing = Self.pairingURL, await Tunnel.isConnected() {
             let json = await Task.detached { Self.take(launcher_apps(pairing.path)) }.value
             if let arr = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [[String: String]] {
                 list = arr.filter { $0["type"] == "User" || $0["type"] == "System" }
@@ -177,7 +234,11 @@ final class Control {
 
 // the loopback vpn lives in the Tunnel extension
 enum Tunnel {
-    static let bundle = "com.jxherc.agent.tunnel"
+    static let bundle = (Bundle.main.bundleIdentifier ?? "com.jxherc.agent") + ".tunnel"
+
+    struct Failure: LocalizedError {
+        var errorDescription: String? { "The VPN didn't connect." }
+    }
 
     static func manager() async throws -> NETunnelProviderManager {
         let m = try await NETunnelProviderManager.loadAllFromPreferences().first ?? NETunnelProviderManager()
@@ -201,10 +262,14 @@ enum Tunnel {
             if m.connection.status == .connected { return }
             try await Task.sleep(for: .milliseconds(250))
         }
-        throw Claude.Failure(message: "it didn't connect")
+        throw Failure()
+    }
+
+    static func isConnected() async -> Bool {
+        (try? await NETunnelProviderManager.loadAllFromPreferences().first?.connection.status) == .connected
     }
 
     static func off() async {
-        try? await NETunnelProviderManager.loadAllFromPreferences().first?.connection.stopVPNTunnel()
+        (try? await NETunnelProviderManager.loadAllFromPreferences())?.first?.connection.stopVPNTunnel()
     }
 }

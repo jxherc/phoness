@@ -401,7 +401,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 [[package]]
 name = "idevice"
 version = "0.1.68"
-source = "git+https://github.com/jkcoxson/idevice?rev=26a28f6#26a28f6a46b5d85a28043c2e62febfa394c8b0a6"
+source = "git+https://github.com/jkcoxson/idevice?rev=26a28f6a46b5d85a28043c2e62febfa394c8b0a6#26a28f6a46b5d85a28043c2e62febfa394c8b0a6"
 dependencies = [
  "async-stream",
  "async_zip",

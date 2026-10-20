@@ -7,3 +7,7 @@
 - `XCUIDevice.shared.system.openURL` is `open(_:)` in swift.
 - there's no public "which app is in front". the runner checks `.state == .runningForeground` over the last app and then the known list.
 - usbmuxd lists every device paired to the mac, ipads too, and wifi ones come and go. the pairing tool has to match the udid, never take the first one.
+- loopback is shared by every app on the phone. the runner's server is the attack surface: a negative content-length crashed it before the token check. parse defensively, cap sizes, time out reads, require the token and json.
+- system alerts (permission prompts) belong to springboard, so the front app's snapshot doesn't have them. the runner appends springboard's alert to the element list.
+- the front app comes from `XCUIDevice.shared.accessibilityInterface.activeApplications` (pid) and `applicationMonitor applicationProcessWithPID:` (bundle id). both private, checked by type encoding, with the state scan as fallback.
+- `rust-toolchain.toml` with an exact version makes rustup install that toolchain next to `stable`, components like clippy included separately.

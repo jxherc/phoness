@@ -13,14 +13,26 @@ final class RunnerTests: XCTestCase {
     @MainActor
     func testServe() throws {
         continueAfterFailure = true
-        let port = UInt16(ProcessInfo.processInfo.environment["RUNNER_PORT"] ?? "") ?? 8123
+        let env = ProcessInfo.processInfo.environment
+        let port = UInt16(env["RUNNER_PORT"] ?? "") ?? 8123
+
+        // the app's launcher passes a fresh token. runs from xcode get RUNNER_DEV=1 from the
+        // scheme (project.yml) and use "dev". with neither, don't serve at all.
+        var token = env["RUNNER_TOKEN"] ?? ""
+        if token.isEmpty, env["RUNNER_DEV"] == "1" { token = "dev" }
+        guard !token.isEmpty else {
+            NSLog("runner: no RUNNER_TOKEN and not a dev run, not serving")
+            return
+        }
+
         let phone = Phone()
         self.phone = phone
-        // set when the app launched us. from xcode there's none, and that's fine for dev
-        let token = ProcessInfo.processInfo.environment["RUNNER_TOKEN"] ?? ""
-        let server = try Server(port: port) { req in
-            if !token.isEmpty, req.token != token { return .json(["error": "bad token"], status: 403) }
-            return MainActor.assumeIsolated { phone.handle(req) }
+        let server = try Server(port: port, token: token) { req in
+            MainActor.assumeIsolated { phone.handle(req) }
+        }
+        server.onFail = { msg in
+            NSLog("runner: %@", msg)
+            DispatchQueue.main.async { phone.stopped = true }
         }
         server.start()
         NSLog("runner listening on 127.0.0.1:%d", port)
@@ -32,25 +44,37 @@ final class RunnerTests: XCTestCase {
 
 @MainActor
 final class Phone {
-    nonisolated(unsafe) static var lastIssue: String?
+    // xctest can record issues from any thread
+    private nonisolated static let issueLock = NSLock()
+    private nonisolated(unsafe) static var issue: String?
+    nonisolated static var lastIssue: String? {
+        get { issueLock.withLock { issue } }
+        set { issueLock.withLock { issue = newValue } }
+    }
 
     var stopped = false
     private var current: String?
     private var known: [String] = []
+    // most recent first, so the slow scan usually hits early
+    private var recent: [String] = []
     // reusing these skips xctest's per-instance setup, which is slow
     private var cache: [String: XCUIApplication] = [:]
+    private let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+    // springboard's frame is the whole screen, in points. refreshed per request for rotation
+    private var screen = CGSize(width: 1, height: 1)
 
     private func handleFor(_ id: String) -> XCUIApplication {
+        if id == "com.apple.springboard" { return springboard }
         if let a = cache[id] { return a }
         let a = XCUIApplication(bundleIdentifier: id)
         cache[id] = a
         return a
     }
-    private let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
 
     init() {
         Self.skipIdleWaits()
         known = Self.installedApps().map { $0["id"] ?? "" }.filter { !$0.isEmpty }
+        refreshScreen()
     }
 
     // xctest waits for an app to stop animating before every action. busy apps never do,
@@ -61,9 +85,9 @@ final class Phone {
     static func skipIdleWaits() {
         guard let cls = NSClassFromString("XCUIApplicationProcess") else { return }
 
-        // (BOOL animations, BOOL preEvent)
+        // (BOOL animations, BOOL preEvent). only swap it if the encoding is exactly that
         let two = NSSelectorFromString("waitForQuiescenceIncludingAnimationsIdle:isPreEvent:")
-        if let m = class_getInstanceMethod(cls, two), returnsVoid(m) {
+        if let m = class_getInstanceMethod(cls, two), encoding(m) == "v24@0:8B16B20" {
             typealias F = @convention(c) (AnyObject, Selector, Bool, Bool) -> Void
             let orig = unsafeBitCast(method_getImplementation(m), to: F.self)
             let block: @convention(block) (AnyObject, Bool, Bool) -> Void = { obj, a, b in
@@ -72,10 +96,9 @@ final class Phone {
             method_setImplementation(m, imp_implementationWithBlock(block))
         }
 
-        // (BOOL animations, BOOL usingActivity, BOOL preEvent), going by its type encoding
+        // (BOOL animations, BOOL usingActivity, BOOL preEvent)
         let three = NSSelectorFromString("waitForQuiescenceIncludingAnimationsIdle:usingActivity:isPreEvent:")
-        if let m = class_getInstanceMethod(cls, three), returnsVoid(m),
-           String(cString: method_getTypeEncoding(m)!).hasSuffix("B16B20B24") {
+        if let m = class_getInstanceMethod(cls, three), encoding(m) == "v28@0:8B16B20B24" {
             typealias F = @convention(c) (AnyObject, Selector, Bool, Bool, Bool) -> Void
             let orig = unsafeBitCast(method_getImplementation(m), to: F.self)
             let block: @convention(block) (AnyObject, Bool, Bool, Bool) -> Void = { obj, a, b, c in
@@ -85,22 +108,18 @@ final class Phone {
         }
     }
 
-    private static func returnsVoid(_ m: Method) -> Bool {
-        guard let enc = method_getTypeEncoding(m) else { return false }
-        return String(cString: enc).hasPrefix("v")
+    private static func encoding(_ m: Method) -> String {
+        method_getTypeEncoding(m).map { String(cString: $0) } ?? ""
     }
-
-    // springboard's frame is the whole screen, in points
-    private(set) lazy var screen: CGSize = springboard.frame.size
 
     func handle(_ req: Server.Request) -> Server.Response {
         Phone.lastIssue = nil
         switch (req.method, req.path) {
-        case ("GET", "/status"):
-            return .json(["ok": true, "width": screen.width, "height": screen.height])
         case ("GET", "/look"):
+            refreshScreen()
             return look()
         case ("POST", "/act"):
+            refreshScreen()
             return act(req.json)
         case ("GET", "/apps"):
             return .json(Self.installedApps())
@@ -113,6 +132,11 @@ final class Phone {
         default:
             return .json(["error": "no such endpoint"], status: 404)
         }
+    }
+
+    private func refreshScreen() {
+        let s = springboard.frame.size
+        if s.width > 1, s.height > 1 { screen = s }
     }
 
     // MARK: look
@@ -135,6 +159,13 @@ final class Phone {
         } catch {
             elements = "(couldn't read elements: \(error.localizedDescription))"
         }
+        // permission prompts and other system alerts belong to springboard, not the app in front
+        if app != springboard {
+            let alert = springboard.alerts.firstMatch
+            if alert.exists, let snap = try? alert.snapshot() {
+                elements += "\nsystem alert on top:\n" + describe(snap)
+            }
+        }
         return .json([
             "app": id,
             "width": screen.width,
@@ -144,20 +175,59 @@ final class Phone {
         ])
     }
 
-    // which app is in front. checks the last one first, then scans.
-    // there's no public api for this, so it's a loop over app states.
+    // which app is in front. asks xctest's accessibility client first (private, checked at every
+    // step), then falls back to asking each known app for its state, most recent first.
     private func foreground() -> (XCUIApplication, String) {
-        var seen = Set<String>()
-        for id in [current].compactMap({ $0 }) + known {
-            guard seen.insert(id).inserted, id != "com.apple.springboard" else { continue }
+        if let id = frontBundleID() {
+            remember(id)
+            return (handleFor(id), id)
+        }
+        var seen: Set<String> = ["com.apple.springboard"]
+        for id in [current].compactMap({ $0 }) + recent + known {
+            guard seen.insert(id).inserted else { continue }
             let app = handleFor(id)
             if app.state == .runningForeground {
-                current = id
+                remember(id)
                 return (app, id)
             }
         }
         current = nil
         return (springboard, "com.apple.springboard")
+    }
+
+    private func remember(_ id: String) {
+        current = id == "com.apple.springboard" ? nil : id
+        guard id != "com.apple.springboard" else { return }
+        recent.removeAll { $0 == id }
+        recent.insert(id, at: 0)
+        if recent.count > 12 { recent.removeLast() }
+    }
+
+    private func frontBundleID() -> String? {
+        let dev = XCUIDevice.shared as NSObject
+        func get(_ obj: NSObject, _ name: String) -> NSObject? {
+            let sel = NSSelectorFromString(name)
+            guard obj.responds(to: sel) else { return nil }
+            return obj.perform(sel)?.takeUnretainedValue() as? NSObject
+        }
+        guard let ax = get(dev, "accessibilityInterface"),
+              let apps = get(ax, "activeApplications") as? [NSObject],
+              let front = apps.first,
+              front.responds(to: NSSelectorFromString("processIdentifier")),
+              let pid = (front.value(forKey: "processIdentifier") as? NSNumber)?.int32Value, pid > 0,
+              let monitor = get(dev, "applicationMonitor")
+        else { return nil }
+
+        let byPID = NSSelectorFromString("applicationProcessWithPID:")
+        guard let m = class_getInstanceMethod(type(of: monitor), byPID),
+              Self.encoding(m).hasSuffix("i16") else { return nil }
+        typealias F = @convention(c) (AnyObject, Selector, Int32) -> Unmanaged<AnyObject>?
+        let f = unsafeBitCast(method_getImplementation(m), to: F.self)
+        guard let proc = f(monitor, byPID, pid)?.takeUnretainedValue() as? NSObject,
+              proc.responds(to: NSSelectorFromString("bundleID")),
+              let id = proc.value(forKey: "bundleID") as? String, !id.isEmpty
+        else { return nil }
+        return id
     }
 
     private func describe(_ root: XCUIElementSnapshot) -> String {
@@ -173,18 +243,21 @@ final class Phone {
                 return
             }
 
-            let label = String(e.label.prefix(80))
-            let value = String((e.value as? String ?? "").prefix(80))
-            let hint = e.placeholderValue ?? ""
+            // one element per line, so newlines in text become spaces
+            let flat = { (s: String) in s.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces) }
+            let label = String(flat(e.label).prefix(80))
+            let value = String(flat(e.value as? String ?? "").prefix(80))
+            let hint = flat(e.placeholderValue ?? "")
             let f = e.frame.intersection(bounds)
 
             let named = !label.isEmpty || !value.isEmpty || !hint.isEmpty
             // unnamed cells and containers are just noise, their children carry the text
             let skip = [.application, .window].contains(t)
                 || ([.other, .cell, .table, .collectionView, .scrollView].contains(t) && label.isEmpty)
-                || label.hasSuffix("scroll bar, 1 page") || label.contains("scroll bar,")
-            if !f.isNull, f.width > 1, f.height > 1, named || Self.tappable.contains(t), !skip,
-               !(label == parentLabel && value.isEmpty) {
+                || label.contains("scroll bar,")
+            // a text inside a button with the same label says nothing new
+            let repeat_ = !label.isEmpty && label == parentLabel && value.isEmpty && !Self.tappable.contains(t)
+            if !f.isNull, f.width > 1, f.height > 1, named || Self.tappable.contains(t), !skip, !repeat_ {
                 var line = Self.name(t)
                 if !label.isEmpty { line += " \"\(label)\"" }
                 if !value.isEmpty, value != label { line += " value=\"\(value)\"" }
@@ -239,7 +312,12 @@ final class Phone {
         let action = a["action"] as? String ?? ""
         let (app, _) = foreground()
         let origin = app.coordinate(withNormalizedOffset: .zero)
-        func num(_ k: String) -> Double? { (a[k] as? NSNumber)?.doubleValue }
+        // model input, so everything gets clamped before it touches xctest
+        func num(_ k: String) -> Double? {
+            guard let d = (a[k] as? NSNumber)?.doubleValue, d.isFinite else { return nil }
+            return d
+        }
+        func seconds(_ fallback: Double) -> Double { min(max(num("seconds") ?? fallback, 0.1), 10) }
         func point(_ kx: String, _ ky: String) -> XCUICoordinate? {
             guard let x = num(kx), let y = num(ky),
                   (0...screen.width).contains(x), (0...screen.height).contains(y) else { return nil }
@@ -249,10 +327,12 @@ final class Phone {
 
         switch action {
         case "tap", "double_tap", "long_press":
-            guard let p = point("x", "y") else { return bad("\(action) needs x and y on screen (0-\(Int(screen.width)), 0-\(Int(screen.height)))") }
+            guard let p = point("x", "y") else {
+                return bad("\(action) needs x and y on screen (0-\(Int(screen.width)), 0-\(Int(screen.height)))")
+            }
             if action == "tap" { p.tap() }
             if action == "double_tap" { p.doubleTap() }
-            if action == "long_press" { p.press(forDuration: num("seconds") ?? 1) }
+            if action == "long_press" { p.press(forDuration: seconds(1)) }
         case "swipe":
             guard let from = point("x", "y"), let to = point("to_x", "to_y") else {
                 return bad("swipe needs x, y, to_x, to_y, all on screen")
@@ -260,6 +340,7 @@ final class Phone {
             from.press(forDuration: 0.05, thenDragTo: to, withVelocity: .default, thenHoldForDuration: 0)
         case "type":
             guard !text.isEmpty else { return bad("type needs text") }
+            guard text.count <= 2000 else { return bad("type takes up to 2000 characters at a time") }
             app.typeText(text)
         case "key":
             let keys: [String: String] = [
@@ -268,7 +349,7 @@ final class Phone {
                 "tab": XCUIKeyboardKey.tab.rawValue, "space": " ",
             ]
             guard let k = keys[text.lowercased()] else { return bad("unknown key \(text)") }
-            let times = max(1, min(Int(num("count") ?? 1), 50))
+            let times = Int(min(max(num("count") ?? 1, 1), 50))
             app.typeText(String(repeating: k, count: times))
         case "home":
             XCUIDevice.shared.press(.home)
@@ -276,15 +357,17 @@ final class Phone {
         case "open_app":
             guard let id = a["bundle_id"] as? String, !id.isEmpty else { return bad("open_app needs bundle_id") }
             handleFor(id).activate()
-            current = id
+            remember(id)
             // no idle wait anymore, give the launch a moment
             RunLoop.current.run(until: Date().addingTimeInterval(1))
         case "open_url":
-            guard let url = URL(string: a["url"] as? String ?? "") else { return bad("open_url needs a url") }
+            guard let url = URL(string: a["url"] as? String ?? ""), url.scheme != nil else {
+                return bad("open_url needs a full url")
+            }
             XCUIDevice.shared.system.open(url)
             current = nil
         case "wait":
-            RunLoop.current.run(until: Date().addingTimeInterval(min(num("seconds") ?? 1, 10)))
+            RunLoop.current.run(until: Date().addingTimeInterval(seconds(1)))
         default:
             return bad("unknown action \(action)")
         }

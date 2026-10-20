@@ -350,7 +350,7 @@ dependencies = [
 [[package]]
 name = "idevice"
 version = "0.1.68"
-source = "git+https://github.com/jkcoxson/idevice?rev=26a28f6#26a28f6a46b5d85a28043c2e62febfa394c8b0a6"
+source = "git+https://github.com/jkcoxson/idevice?rev=26a28f6a46b5d85a28043c2e62febfa394c8b0a6#26a28f6a46b5d85a28043c2e62febfa394c8b0a6"
 dependencies = [
  "base64 0.22.1",
  "chrono",
