@@ -40,12 +40,17 @@ struct Claude {
         on: @MainActor (Event) -> Void
     ) async throws -> (content: [[String: Any]], stop: String) {
         let fallbacks = !Self.noFallbacks.contains(model)
+        var systemBlocks = [["type": "text", "text": system]]
+        if usesOAuth {
+            // Subscription requests require this compatibility block first.
+            systemBlocks.insert(["type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude."], at: 0)
+        }
         var body: [String: Any] = [
             "model": model,
             "max_tokens": 32000,
             "stream": true,
             "thinking": ["type": "adaptive"],
-            "system": [["type": "text", "text": system]],
+            "system": systemBlocks,
             "tools": tools,
             "messages": messages,
             // caches everything up to the last block, saves a lot on long runs

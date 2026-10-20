@@ -170,6 +170,14 @@ final class Stub: URLProtocol, @unchecked Sendable {
         try check(response.stop == "end_turn" && response.content.first?["text"] as? String == "hello" && text == "hello", "SSE parsing after refresh")
         var requests = Stub.requests
         try check(requests.count == 3 && requests[0].value(forHTTPHeaderField: "Authorization") == "Bearer old" && requests[1].url == ClaudeAuth.tokenURL && requests[2].value(forHTTPHeaderField: "Authorization") == "Bearer rotated" && requests.allSatisfy { $0.value(forHTTPHeaderField: "x-api-key") == nil }, "401 refresh and bearer replay")
+        let originalBody = requests[0].httpBody ?? readBody(requests[0])
+        let oauthBody = try JSONSerialization.jsonObject(with: originalBody) as! [String: Any]
+        let oauthSystem = [
+            ["type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude."],
+            ["type": "text", "text": "test"],
+        ]
+        try check(oauthBody["system"] as? [[String: String]] == oauthSystem, "OAuth client prefix preserves original system block")
+        try check((requests[2].httpBody ?? readBody(requests[2])) == originalBody, "token refresh replays unchanged message body")
         try store.seed(expired: false)
         Stub.configureSequence([(401, error("expired")), (200, rotated), (401, error("still rejected"))])
         try await rejected { _ = try await client(store, model: "twice-model").send(system: "test", tools: [], messages: []) { _ in } }
@@ -221,12 +229,15 @@ final class Stub: URLProtocol, @unchecked Sendable {
         Stub.configureSequence([(200, sse)])
         let apiResponse = try await client(apiStore, model: "api-model").send(system: "test", tools: [], messages: []) { _ in }
         try check(apiResponse.stop == "end_turn" && Stub.requests[0].value(forHTTPHeaderField: "x-api-key") == "synthetic-key" && Stub.requests[0].value(forHTTPHeaderField: "Authorization") == nil, "API key SSE regression")
+        let apiBody = try JSONSerialization.jsonObject(with: Stub.requests[0].httpBody ?? readBody(Stub.requests[0])) as! [String: Any]
+        try check(apiBody["system"] as? [[String: String]] == [["type": "text", "text": "test"]], "API key preserves original system without OAuth prefix")
         try store.seed(expired: false)
         Stub.configureSequence([(400, error("fallbacks unavailable")), (200, sse)])
         _ = try await client(store, model: "fallback-model").send(system: "test", tools: [], messages: []) { _ in }
         requests = Stub.requests
         let replayBody = try JSONSerialization.jsonObject(with: requests[1].httpBody ?? readBody(requests[1])) as! [String: Any]
         try check(requests.count == 2 && requests[1].value(forHTTPHeaderField: "anthropic-beta") == "oauth-2025-04-20" && replayBody["fallbacks"] == nil && requests[1].value(forHTTPHeaderField: "Authorization") == "Bearer old", "fallback retry retains OAuth beta")
+        try check(replayBody["system"] as? [[String: String]] == oauthSystem, "fallback replay preserves exactly one OAuth prefix")
     }
     static func readBody(_ request: URLRequest) -> Data {
         guard let stream = request.httpBodyStream else { return Data() }
