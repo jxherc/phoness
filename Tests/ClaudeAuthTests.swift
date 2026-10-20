@@ -188,7 +188,7 @@ final class Stub: URLProtocol, @unchecked Sendable {
             _ = try await client(store, model: "rate-limited-model").send(system: "test", tools: [], messages: []) { _ in }
             throw NSError(domain: "429 unexpectedly succeeded", code: 1)
         } catch let failure as Claude.Failure {
-            try check(failure.message == "claude rate-limited this account (http 429). try again later.", "generic 429 explains account rate limit")
+            try check(failure.message == "claude rejected the subscription request (http 429). this may be a usage limit or a restriction on this app.", "generic 429 explains uncertain subscription rejection")
         }
         try check(Stub.requests.count == 5 && Stub.requests.allSatisfy {
             $0.value(forHTTPHeaderField: "Authorization") == "Bearer old" && $0.value(forHTTPHeaderField: "x-api-key") == nil
