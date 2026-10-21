@@ -21,6 +21,8 @@ final class Agent {
 
     private var messages: [[String: Any]] = []
     private var job: Task<Void, Never>?
+    // set once this run has touched another app, so we know to come back when it ends
+    private var acted = false
     private var bg: BGContinuedProcessingTask?
     private var bgShort: UIBackgroundTaskIdentifier = .invalid
     // which run the background task belongs to, so a late launch handler can tell it's stale
@@ -47,12 +49,18 @@ final class Agent {
         status = "Thinking"
         let id = UUID()
         runID = id
+        acted = false
         startBackground(id)
         job = Task {
             await loop()
             running = false
             status = ""
             runID = nil
+            // it worked in other apps, so bring the answer back on screen. not after a stop,
+            // the user may want to stay where they are. needs the background time, so before endBackground
+            if acted, !Task.isCancelled, UIApplication.shared.applicationState != .active {
+                _ = try? await Runner.call("/act", body: ["action": "open_app", "bundle_id": Bundle.main.bundleIdentifier ?? "com.jxherc.agent"], timeout: 10)
+            }
             endBackground()
             save()
         }
@@ -149,6 +157,7 @@ final class Agent {
                     continue
                 }
                 setStatus("Running \(name)")
+                if name == "phone_act" { acted = true }
                 let out = await Tools.run(name, input)
                 items.append(Item(kind: .tool, text: Tools.title(name), detail: Tools.summary(name, input, out)))
                 r["content"] = out.content
