@@ -20,7 +20,6 @@ idevice = { path = "../launcher/idevice", default-features = false, features = [
   "core_device_proxy",
   "core_device",
   "display_stream",
-  "mobile_image_mounter",
   "rsd",
   "tunnel_tcp_stack",
 ] }
