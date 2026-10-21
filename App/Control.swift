@@ -25,6 +25,9 @@ enum Runner {
         set { lock.withLock { current = newValue } }
     }
 
+    // ephemeral: nothing from the runner (screenshots, screen text) goes to the disk cache
+    private static let session = URLSession(configuration: .ephemeral)
+
     static func call(_ path: String, body: [String: Any]? = nil, timeout: Double = 60) async throws -> [String: Any] {
         var req = URLRequest(url: URL(string: "http://127.0.0.1:\(port)\(path)")!)
         req.timeoutInterval = timeout
@@ -34,7 +37,7 @@ enum Runner {
             req.setValue("application/json", forHTTPHeaderField: "content-type")
             req.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
-        let (data, resp) = try await URLSession.shared.data(for: req)
+        let (data, resp) = try await session.data(for: req)
         let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
         let obj = try? JSONSerialization.jsonObject(with: data)
         guard (200..<300).contains(status) else {

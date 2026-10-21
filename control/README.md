@@ -29,7 +29,7 @@ in `.pairing/`. with more than one, pass `UDID=<udid>`.
 coords are screen **pixels** by default, matched to the last screenshot. add `n` (tapn,
 swipen) for raw 0-65535 hid coordinates.
 
-- `shot [path]` screenshot to png (default `screen.png`), prints its pixel size
+- `shot [path]` screenshot to png (default `screen.png`, the path must end in `.png`), prints its pixel size
 - `tap x y` / `tapn x y`
 - `swipe x1 y1 x2 y2` / `swipen ...` (a real drag, ~0.6s, so it scrolls instead of flicking)
 - `text "hello world"` type on the keyboard (us layout, ascii)
@@ -68,6 +68,9 @@ over usbmuxd it opens a coredevice tunnel to the phone, then rsd (the service li
 - input needs the screen-sharing gate, and ios refuses that while the phone is **on a call**
   or already mirroring/recording. screenshots still work then.
 - it can't enter or get past the passcode. that's the secure enclave.
+- over wifi it doesn't check the phone's own key (idevice's pair-verify skips that), so another machine on
+  the same network could pretend to be your phone and see what you send. it says so when it connects
+  over wifi. use usb on networks you don't trust.
 - the wifi path uses the same pairing file as the app. if the app's runner is up at the same
   time, the two connections share one identity. not tested together.
 - needs the developer disk image mounted (open the phone in xcode once). developer mode on.

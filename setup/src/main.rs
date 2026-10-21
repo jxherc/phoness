@@ -104,7 +104,19 @@ async fn main() {
         .await
         .unwrap_or_else(|e| die(&format!("pairing failed, tap trust on the phone and rerun ({e})")));
 
-    std::fs::write(&out, pairing.to_bytes()).unwrap_or_else(|e| die(&format!("couldn't write {out} ({e})")));
+    // created 0600 from the start, so it's never readable by others, even briefly
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&out)
+            .unwrap_or_else(|e| die(&format!("couldn't write {out} ({e})")));
+        f.write_all(&pairing.to_bytes()).unwrap_or_else(|e| die(&format!("couldn't write {out} ({e})")));
+    }
     std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o600))
         .unwrap_or_else(|e| die(&format!("couldn't lock down {out} ({e})")));
     println!("wrote {out}");

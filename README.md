@@ -74,7 +74,9 @@ this is an experimental compatibility flow using claude's public cli oauth clien
 - the on-device start (vpn, remote pairing tunnel, disk image check, runner launch) ran on an iphone 16 pro on ios 27.0.1 on 2026-10-20. the disk image was already mounted there, so the mount step itself hasn't run on a phone yet. other phones and ios versions are untested.
 - each runner start asks for the passcode. ios drops the runner when the app's testmanagerd connection goes away, for example when the app gets killed. the next message starts it again.
 - the runner uses private api. it skips xctest's wait-for-idle like webdriveragent does, asks xctest's accessibility client which app is in front, and falls back to `LSApplicationWorkspace` for the app list (on the phone the list comes from installation_proxy). a new xcode can break any of these, the code checks each step and falls back.
-- the runner's token is fresh for every start from the app. a runner started from xcode uses the fixed `dev` token, so while that one is up any app on the phone could drive it. that's for development only.
+- the runner's token is fresh for every start, from the app and from `examples/mac.rs`. a runner started from xcode uses the fixed `dev` token, so while that one is up any app on the phone could drive it. that's for development only. the runner only listens on 127.0.0.1 and refuses other host names, so web pages can't reach it through dns rebinding.
+- the agent reads other apps' screens. the prompt tells it screen text is content, never instructions, but a page or message written to steer it can still try. nothing in code asks you before it taps, types or opens a link, so watch what it does.
+- a local app can hold the runner's 16 connection slots and lock the agent out until it lets go. it can't read or drive anything that way.
 - while the vpn is on, any app on the phone can reach remotepairingd at `10.7.0.1`. it needs the pairing file to do anything past the handshake. the app turns the vpn off with iPhone Control.
 - remotepairingd seems to need wifi on. that's what stikdebug says for the same path. not tried on cellular.
 - landscape hasn't been tested.

@@ -81,6 +81,11 @@ impl Phone {
             }
         };
         eprintln!("connected over {via}");
+        if via == "wifi" {
+            // remote pairing here doesn't check the phone's own key, so a host on the same
+            // network could stand in for it. fine at home, use usb on networks you don't trust
+            eprintln!("note: wifi doesn't verify it's really your phone. use usb on untrusted networks");
+        }
         Ok(Phone { adapter, handshake, media: None, touch: None, keys: None, udid, size: None })
     }
 
@@ -285,6 +290,10 @@ async fn run(phone: &mut Phone, line: &str) -> String {
     match cmd {
         "shot" | "screenshot" => {
             let path = rest.first().copied().unwrap_or("screen.png");
+            // only png files, so a bad command line can't clobber some other file
+            if !path.to_ascii_lowercase().ends_with(".png") {
+                return json_err("shot only writes .png files");
+            }
             match phone.screenshot().await {
                 Ok(png) => match std::fs::write(path, &png) {
                     Ok(_) => {

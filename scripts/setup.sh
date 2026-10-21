@@ -37,6 +37,8 @@ echo "\n== pairing file"
 # a paired-host credential for the phone, so it lives outside the app bundle and git.
 # older setups wrote a lockdown pairing file here, the tool replaces it
 mkdir -p .pairing && chmod 700 .pairing
+# ignores itself and everything here, so a clone without the local ignore rules can't commit it
+echo '*' > .pairing/.gitignore
 pairing=.pairing/$udid.plist
 (cd setup && cargo build --release --locked -q)
 setup/target/release/pairing $pairing $udid
@@ -56,6 +58,7 @@ for b in m['BuildIdentities']:
 " $ddi/BuildManifest.plist)
 [[ -n "$dmg" ]] || { echo "xcode's disk image has no personalized dmg, this xcode isn't supported."; exit 1; }
 mkdir -p $dev/DDI
+echo '*' > $dev/DDI/.gitignore
 cp $ddi/$dmg $dev/DDI/Image.dmg
 cp $ddi/Firmware/$dmg.trustcache $dev/DDI/Image.dmg.trustcache
 cp $ddi/BuildManifest.plist $dev/DDI/BuildManifest.plist

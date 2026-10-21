@@ -12,6 +12,11 @@ async fn main() {
     }
     let addr = std::net::SocketAddr::new(a[0].parse().expect("ip"), a[1].parse().expect("port"));
     launcher::set_log(Some("/dev/stderr".into()));
-    let res = launcher::run(0, addr, a[2].clone(), a[3].clone(), a[4].clone(), 8123, "dev".into()).await;
+    // a fresh token, not the fixed "dev" one, so other apps on the phone can't use this runner
+    let mut raw = [0u8; 16];
+    std::io::Read::read_exact(&mut std::fs::File::open("/dev/urandom").expect("urandom"), &mut raw).expect("urandom");
+    let token: String = raw.iter().map(|b| format!("{b:02x}")).collect();
+    eprintln!("runner token: {token}");
+    let res = launcher::run(0, addr, a[2].clone(), a[3].clone(), a[4].clone(), 8123, token).await;
     println!("{res:?}");
 }
