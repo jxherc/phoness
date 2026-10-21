@@ -11,7 +11,7 @@ an agent that runs on the iphone and drives any app on it. it looks at the scree
 
 remake of [finn voorhees' demo](https://x.com/finnvoorhees/status/2108279639538012265).
 
-<p align="center"><img src="docs/demo.gif" width="270" alt="asking the agent whether to bring an umbrella. it opens the weather app, checks today and tomorrow, and answers in the chat"></p>
+<p align="center"><img src="docs/demo.gif" width="480" alt="asking the agent whether to bring an umbrella. it opens the weather app, checks today and tomorrow, and answers in the chat"></p>
 
 <p align="center"><a href="docs/demo.mp4">full video</a></p>
 
