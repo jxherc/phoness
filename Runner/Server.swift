@@ -10,6 +10,7 @@ final class Server {
         var path = ""
         var query: [String: String] = [:]
         var token = ""
+        var host = ""
         var contentType = ""
         var body = Data()
 
@@ -43,6 +44,7 @@ final class Server {
     private let listener: NWListener
     private let queue = DispatchQueue(label: "server")
     private let token: String
+    private let port: UInt16
     // runs on main, xcuitest wants that
     private let handle: (Request) -> Response
     private var open = 0
@@ -50,10 +52,12 @@ final class Server {
 
     init(port: UInt16, token: String, handle: @escaping (Request) -> Response) throws {
         let params = NWParameters.tcp
-        params.allowLocalEndpointReuse = true
-        params.requiredInterfaceType = .loopback
-        listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
+        // bound to 127.0.0.1 itself, not *:port. on a wildcard bind another app could bind the
+        // narrower 127.0.0.1:port and take our connections, token header and all
+        params.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: port)!)
+        listener = try NWListener(using: params)
         self.token = token
+        self.port = port
         self.handle = handle
     }
 
@@ -106,6 +110,10 @@ final class Server {
     }
 
     private func answer(_ conn: NWConnection, _ req: Request) {
+        // a dns-rebinding page reaches us as its own origin but keeps its own host name
+        guard req.host == "127.0.0.1:\(port)" || req.host == "localhost:\(port)" else {
+            return send(conn, .json(["error": "bad host"], status: 403))
+        }
         guard !token.isEmpty, req.token == token else {
             return send(conn, .json(["error": "bad token"], status: 403))
         }
@@ -127,6 +135,8 @@ final class Server {
         var head = "HTTP/1.1 \(res.status) \(res.status == 200 ? "OK" : "Error")\r\n"
         head += "Content-Type: \(res.type)\r\n"
         head += "Content-Length: \(res.body.count)\r\n"
+        // screenshots and screen text shouldn't land in the app's url cache
+        head += "Cache-Control: no-store\r\n"
         head += "Connection: close\r\n\r\n"
         var out = Data(head.utf8)
         out.append(res.body)
@@ -156,6 +166,7 @@ final class Server {
                 guard n <= maxBody else { return .bad(413, "body too big") }
                 length = n
             case "x-runner-token": req.token = value
+            case "host": req.host = value.lowercased()
             case "content-type": req.contentType = value
             default: break
             }
