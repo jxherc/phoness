@@ -2,6 +2,8 @@ import SwiftUI
 
 struct ChatView: View {
     @State private var agent = Agent.shared
+    // watched here so the header changes as soon as settings does (agent.model reads defaults directly)
+    @AppStorage("model") private var model = Models.all[0].id
     @State private var draft = ""
     @State private var settings = false
     @State private var open: Set<UUID> = []
@@ -85,7 +87,7 @@ struct ChatView: View {
                         .frame(width: 44, height: 44)
                         .background(Color(white: 0.36), in: .circle)
                     HStack(spacing: 2) {
-                        Text(Models.name(agent.model))
+                        Text(Models.name(model))
                             .lineLimit(1)
                         Image(systemName: "chevron.right")
                             .font(.system(size: 8, weight: .bold))
@@ -101,7 +103,7 @@ struct ChatView: View {
             }
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity)
-            .accessibilityLabel("\(Models.name(agent.model)), settings")
+            .accessibilityLabel("\(Models.name(model)), settings")
 
             Button {
                 agent.reset()

@@ -112,6 +112,72 @@ final class Phone {
         method_getTypeEncoding(m).map { String(cString: $0) } ?? ""
     }
 
+    // the method, if it's there with exactly this signature. prints what it found otherwise
+    private static func method(_ cls: AnyClass, _ name: String, _ enc: String) -> Method? {
+        guard let m = class_getInstanceMethod(cls, NSSelectorFromString(name)) else {
+            print("typeDirect: no \(name)")
+            return nil
+        }
+        guard encoding(m) == enc else {
+            print("typeDirect: \(name) is \(encoding(m)), wanted \(enc)")
+            return nil
+        }
+        return m
+    }
+
+    // app.typeText first asks for the element with keyboard focus, and in some apps that
+    // query never comes back (reminders' new-reminder sheet hung the runner for minutes).
+    // webdriveragent sidesteps it the same way: build the text event ourselves and hand it
+    // straight to xctest's event synthesizer. false means a piece is missing, use typeText.
+    static func typeDirect(_ text: String) -> Bool {
+        guard let pathCls = NSClassFromString("XCPointerEventPath") as? NSObject.Type,
+              let recCls = NSClassFromString("XCSynthesizedEventRecord") as? NSObject.Type,
+              let mInit = method(pathCls, "initForTextInput", "@16@0:8"),
+              let mType = method(pathCls, "typeText:atOffset:typingSpeed:shouldRedact:", "v44@0:8@16d24Q32B40"),
+              let mRec = method(recCls, "initWithName:interfaceOrientation:", "@32@0:8@16q24"),
+              method(recCls, "addPointerEventPath:", "v24@0:8@16") != nil
+        else { return false }
+        let device = XCUIDevice.shared as NSObject
+        guard let mSynth = method(type(of: device), "eventSynthesizer", "@16@0:8") else { return false }
+        let synthObj = unsafeBitCast(method_getImplementation(mSynth), to: (@convention(c) (AnyObject, Selector) -> Unmanaged<AnyObject>?).self)(device, NSSelectorFromString("eventSynthesizer"))?.takeUnretainedValue()
+        guard let synth = synthObj as? NSObject,
+              let mFire = method(type(of: synth), "synthesizeEvent:completion:", "@32@0:8@16@?24")
+        else { return false }
+
+        // alloc hands back +1, init returns the same object, so these balance
+        typealias Init = @convention(c) (AnyObject, Selector) -> Unmanaged<AnyObject>
+        guard let rawPath = pathCls.perform(NSSelectorFromString("alloc"))?.takeRetainedValue() else { return false }
+        let path = unsafeBitCast(method_getImplementation(mInit), to: Init.self)(rawPath, NSSelectorFromString("initForTextInput")).takeUnretainedValue()
+        typealias TypeText = @convention(c) (AnyObject, Selector, NSString, Double, UInt64, Bool) -> Void
+        // 60 characters a second, what webdriveragent uses
+        unsafeBitCast(method_getImplementation(mType), to: TypeText.self)(path, NSSelectorFromString("typeText:atOffset:typingSpeed:shouldRedact:"), text as NSString, 0, 60, false)
+
+        typealias InitRec = @convention(c) (AnyObject, Selector, NSString, Int) -> Unmanaged<AnyObject>
+        guard let rawRec = recCls.perform(NSSelectorFromString("alloc"))?.takeRetainedValue() else { return false }
+        let orientation = (1...4).contains(XCUIDevice.shared.orientation.rawValue) ? XCUIDevice.shared.orientation.rawValue : 1
+        let record = unsafeBitCast(method_getImplementation(mRec), to: InitRec.self)(rawRec, NSSelectorFromString("initWithName:interfaceOrientation:"), "Type" as NSString, orientation).takeUnretainedValue()
+        _ = (record as? NSObject)?.perform(NSSelectorFromString("addPointerEventPath:"), with: path)
+
+        // the completion comes back on main, which we're on, so spin the run loop instead of blocking
+        var done = false
+        var failed: Error?
+        let completion: @convention(block) (Bool, NSError?) -> Void = { _, err in
+            failed = err
+            done = true
+        }
+        // it hands something back on xcode 27 (the encoding starts with @). not needed here
+        typealias Fire = @convention(c) (AnyObject, Selector, AnyObject, @convention(block) (Bool, NSError?) -> Void) -> Unmanaged<AnyObject>?
+        _ = unsafeBitCast(method_getImplementation(mFire), to: Fire.self)(synth, NSSelectorFromString("synthesizeEvent:completion:"), record, completion)
+        let deadline = Date().addingTimeInterval(5 + Double(text.count) / 30)
+        while !done, Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        if let failed { print("typeDirect: synthesize failed: \(failed)") }
+        if !done { print("typeDirect: no completion in time") }
+        // it went out either way. falling back now could type it twice, the next look will tell
+        return true
+    }
+
     func handle(_ req: Server.Request) -> Server.Response {
         Phone.lastIssue = nil
         switch (req.method, req.path) {
@@ -341,7 +407,7 @@ final class Phone {
         case "type":
             guard !text.isEmpty else { return bad("type needs text") }
             guard text.count <= 2000 else { return bad("type takes up to 2000 characters at a time") }
-            app.typeText(text)
+            if !Self.typeDirect(text) { app.typeText(text) }
         case "key":
             let keys: [String: String] = [
                 "return": XCUIKeyboardKey.return.rawValue, "enter": XCUIKeyboardKey.return.rawValue,
@@ -350,7 +416,8 @@ final class Phone {
             ]
             guard let k = keys[text.lowercased()] else { return bad("unknown key \(text)") }
             let times = Int(min(max(num("count") ?? 1, 1), 50))
-            app.typeText(String(repeating: k, count: times))
+            let keys2 = String(repeating: k, count: times)
+            if !Self.typeDirect(keys2) { app.typeText(keys2) }
         case "home":
             XCUIDevice.shared.press(.home)
             current = nil
