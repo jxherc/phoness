@@ -76,5 +76,8 @@ over usbmuxd it opens a coredevice tunnel to the phone, then rsd (the service li
 ## tested (2026-10-20, iphone 16 pro, ios 27.0.1)
 
 - `info` and `shot` over usb and over wifi
-- buttons: the phone's input daemon accepted the events. nothing visible confirmed they landed
-- tap, swipe, text, key: not tested yet
+- tap, text, key, swipe and `button home`, on the unlocked phone in serve mode: opened discord
+  from the dock, opened a dm, typed and sent a message, typed `x` and deleted it with
+  `key backspace`, scrolled the chat, went back to the home screen
+- volume buttons: the phone's input daemon accepted them, nothing on screen confirmed it
+- input on the lock screen: not tested
