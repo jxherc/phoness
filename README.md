@@ -13,8 +13,6 @@ remake of [finn voorhees' demo](https://x.com/finnvoorhees/status/21082796395380
 
 <p align="center"><img src="docs/demo.gif" width="480" alt="asking the agent whether to bring an umbrella. it opens the weather app, checks today and tomorrow, and answers in the chat"></p>
 
-<p align="center"><a href="docs/demo.mp4">full video</a></p>
-
 ## how it works
 
 - `App/` the chat app. sends your message to claude over the messages api (streaming, raw http since there's no swift sdk) with four tools: `phone_look`, `phone_act`, `phone_apps`, `current_time`. while a reply runs it asks ios for a continued processing task (the "Replying" pill with a stop button), so it can keep working while other apps are in front.
