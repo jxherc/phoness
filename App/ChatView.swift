@@ -5,6 +5,8 @@ struct ChatView: View {
     // watched here so the header changes as soon as settings does (agent.model reads defaults directly)
     @AppStorage("model") private var model = Models.all[0].id
     @State private var draft = ""
+    // swapped on every send so the text field starts empty (see send())
+    @State private var field = UUID()
     @State private var settings = false
     @State private var open: Set<UUID> = []
     // only follow new messages when the user is already at the bottom
@@ -195,6 +197,7 @@ struct ChatView: View {
     private var input: some View {
         HStack(alignment: .bottom, spacing: 8) {
             TextField("Message", text: $draft, axis: .vertical)
+                .id(field)
                 .lineLimit(1...6)
                 .focused($typing)
                 .padding(.leading, 16)
@@ -239,6 +242,11 @@ struct ChatView: View {
         guard !agent.running else { return }
         agent.send(draft)
         draft = ""
+        // on the phone the multi-line field could keep showing the sent text, or get it back
+        // when the keyboard commits a pending correction after the tap. a fresh field and one
+        // more clear after the keyboard is done fix both
+        field = UUID()
+        DispatchQueue.main.async { draft = "" }
     }
 }
 
