@@ -1,0 +1,15 @@
+{
+  "name": "iphone-computer-use",
+  "description": "claude code plugins for driving an iphone from the mac",
+  "owner": {
+    "name": "jxherc",
+    "email": "houjx0103@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "phone",
+      "source": "./plugin",
+      "description": "drive a usb or wifi iphone from the mac with the phone cli: screenshot, tap, swipe, type, press buttons"
+    }
+  ]
+}

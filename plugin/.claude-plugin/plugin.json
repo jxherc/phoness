@@ -1,0 +1,13 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "phone",
+  "version": "0.1.0",
+  "description": "drive a usb or wifi iphone from the mac with the phone cli: screenshot, tap, swipe, type, press buttons",
+  "author": {
+    "name": "jxherc",
+    "email": "houjx0103@gmail.com"
+  },
+  "skills": [
+    "./"
+  ]
+}
