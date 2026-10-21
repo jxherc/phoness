@@ -11,6 +11,10 @@ an agent that runs on the iphone and drives any app on it. it looks at the scree
 
 remake of [finn voorhees' demo](https://x.com/finnvoorhees/status/2108279639538012265).
 
+<p align="center"><img src="docs/demo.gif" width="270" alt="asking the agent whether to bring an umbrella. it opens the weather app, checks today and tomorrow, and answers in the chat"></p>
+
+<p align="center"><a href="docs/demo.mp4">full video</a></p>
+
 ## how it works
 
 - `App/` the chat app. sends your message to claude over the messages api (streaming, raw http since there's no swift sdk) with four tools: `phone_look`, `phone_act`, `phone_apps`, `current_time`. while a reply runs it asks ios for a continued processing task (the "Replying" pill with a stop button), so it can keep working while other apps are in front.
@@ -62,7 +66,7 @@ this is an experimental compatibility flow using claude's public cli oauth clien
 ## working on it
 
 - `xcodegen generate` first, and again after changing `project.yml`. the xcode project isn't committed.
-- in the simulator the vpn, the launcher and the background task don't work. run the runner with product > test (cmd+u), then open Agent from the simulator's home screen. the scheme sets `RUNNER_DEV=1`, so that runner accepts the fixed `dev` token the app uses by default. the app only gets about 30 seconds in the background there.
+- in the simulator the vpn, the launcher and the background task don't work. run the runner with product > test (cmd+u), then open Agent from the simulator's home screen. the scheme sets `RUNNER_DEV=1`, so that runner accepts the fixed `dev` token the app uses by default. the app only gets 15 to 30 seconds in the background there, then ios freezes it, so a task that works in other apps for longer stalls. use a real phone for anything longer.
 - the app reads `ANTHROPIC_BASE_URL`, and `ANTHROPIC_API_KEY` when no key is saved, from its environment. set them under edit scheme > run > environment. `xcodegen generate` resets the scheme, so put them in `project.yml`'s run action if they should stick.
 - building the rust parts by hand while `xcode-select` points at the command line tools needs `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`. xcode builds set it already.
 - `cargo run --release --example mac -- <phone ip> 49152 .pairing/<udid>.plist App/Resources/Device/DDI <app id>.runner.xctrunner` (in `launcher/`) runs the whole on-device start from the mac against a phone on the same wifi. the phone's ip and port show up in `dns-sd -B _remotepairing._tcp` then `dns-sd -L <name> _remotepairing._tcp`.
@@ -71,7 +75,7 @@ this is an experimental compatibility flow using claude's public cli oauth clien
 
 ## limits
 
-- the on-device start (vpn, remote pairing tunnel, disk image check, runner launch) ran on an iphone 16 pro on ios 27.0.1 on 2026-10-20. the disk image was already mounted there, so the mount step itself hasn't run on a phone yet. other phones and ios versions are untested.
+- the on-device start (vpn, remote pairing tunnel, disk image check, runner launch) ran on an iphone 16 pro on ios 27.0.1 on 2026-10-20. the disk image was already mounted there, so the mount step itself hasn't run on a phone yet. a full run on the same phone worked on 2026-10-21 (the demo above): it switched to the weather app, kept going in the background under the "Replying" task, and answered. other phones and ios versions are untested.
 - each runner start asks for the passcode. ios drops the runner when the app's testmanagerd connection goes away, for example when the app gets killed. the next message starts it again.
 - the runner uses private api. it skips xctest's wait-for-idle like webdriveragent does, asks xctest's accessibility client which app is in front, and falls back to `LSApplicationWorkspace` for the app list (on the phone the list comes from installation_proxy). a new xcode can break any of these, the code checks each step and falls back.
 - the runner's token is fresh for every start, from the app and from `examples/mac.rs`. a runner started from xcode uses the fixed `dev` token, so while that one is up any app on the phone could drive it. that's for development only. the runner only listens on 127.0.0.1 and refuses other host names, so web pages can't reach it through dns rebinding.
