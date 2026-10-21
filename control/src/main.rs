@@ -1,4 +1,6 @@
-// drive the phone from the mac over usb. no on-device app, no vpn.
+// drive the phone from the mac, over usb or wifi. no on-device app, no vpn.
+// usb when usbmuxd sees the phone. otherwise wifi straight to its remotepairingd with the
+// pairing file setup.sh made: PHONE_IP=192.168.2.103 phone shot s.png
 //
 //   phone serve                 read commands on stdin, one per line (for an agent)
 //   phone shot out.png          save a screenshot and print its size
@@ -16,6 +18,7 @@
 // buttons there. it can't enter or get past the passcode, and nothing in software can.
 
 mod stream;
+mod wifi;
 
 use std::io::Write as _;
 
@@ -64,32 +67,20 @@ struct Phone {
 }
 
 impl Phone {
+    // usb when usbmuxd sees the phone (plugged in, or wifi sync while it's awake),
+    // otherwise wifi straight to remotepairingd, which keeps answering while it's locked
     async fn connect(udid: Option<String>) -> Result<Phone, String> {
-        let mut mux = UsbmuxdConnection::default()
-            .await
-            .map_err(|e| format!("can't reach usbmuxd, is this a mac with xcode? ({e})"))?;
-        let devs = mux.get_devices().await.map_err(|e| format!("can't list devices ({e})"))?;
-        // prefer an iphone when no udid is given; usbmuxd lists ipads and the simulators' hosts too
-        let dev = match udid {
-            Some(want) => devs.into_iter().find(|d| d.udid == want),
-            None => devs.into_iter().next(),
-        }
-        .ok_or("no device found. plug the iphone in, unlock it once, trust this mac. for a specific one: UDID=<udid>")?;
-        let udid = dev.udid.clone();
-        let provider = dev.to_provider(UsbmuxdAddr::default(), "phone-control");
-
-        // usb tunnel -> rsd (the list of services we can reach)
-        let proxy = CoreDeviceProxy::connect(&provider)
-            .await
-            .map_err(|e| format!("can't open a tunnel to the phone, unlock it and try again ({e})"))?;
-        let rsd_port = proxy.tunnel_info().server_rsd_port;
-        let mut adapter = proxy
-            .create_software_tunnel()
-            .map_err(|e| format!("tunnel setup failed ({e})"))?
-            .to_async_handle();
-        let rsd = adapter.connect(rsd_port).await.map_err(|e| format!("rsd connect ({e})"))?;
-        let handshake = RsdHandshake::new(rsd).await.map_err(|e| format!("rsd handshake ({e})"))?;
-
+        // with no UDID, the phone scripts/setup.sh paired (usbmuxd lists ipads too)
+        let udid = udid.or_else(paired_udid);
+        let (adapter, handshake, udid, via) = match usb(udid.as_deref()).await {
+            Some((adapter, handshake, udid)) => (adapter, handshake, udid, "usb"),
+            None => {
+                let udid = udid.ok_or("no phone plugged in and no pairing file in .pairing/. run scripts/setup.sh first")?;
+                let (adapter, handshake) = wifi(&udid).await?;
+                (adapter, handshake, udid, "wifi")
+            }
+        };
+        eprintln!("connected over {via}");
         Ok(Phone { adapter, handshake, media: None, touch: None, keys: None, udid, size: None })
     }
 
@@ -101,8 +92,11 @@ impl Phone {
         let media = stream::start(&mut self.adapter, &mut self.handshake, 1).await.map_err(|e| {
             if e.contains("9022") || e.contains("call is currently in progress") {
                 format!("{e}\nthe phone won't share its screen while a call or another mirroring/recording session is active. end it and retry")
-            } else {
+            } else if e.starts_with("no display service") {
                 format!("{e}\nneeds the developer disk image mounted. open this phone in xcode once, then retry")
+            } else {
+                // seen once: a session from the previous run was still closing. the retry worked
+                format!("{e}\nretry in a few seconds")
             }
         })?;
         // backboardd needs a beat to match the hid surfaces to the new stream
@@ -196,6 +190,66 @@ impl Phone {
         keys.send_button(page, code, ButtonState::Up).await.map_err(|e| e.to_string())?;
         Ok(())
     }
+}
+
+// setup.sh keeps one remote pairing file per phone in the repo's .pairing/
+const PAIRING_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../.pairing");
+
+fn paired_udid() -> Option<String> {
+    let files: Vec<String> = std::fs::read_dir(PAIRING_DIR)
+        .ok()?
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter_map(|n| n.strip_suffix(".plist").map(String::from))
+        .collect();
+    // more than one phone: make them say which with UDID
+    if files.len() == 1 { files.into_iter().next() } else { None }
+}
+
+// None when usbmuxd doesn't list the phone, or the usb tunnel won't open
+async fn usb(udid: Option<&str>) -> Option<(AdapterHandle, RsdHandshake, String)> {
+    let mut mux = UsbmuxdConnection::default().await.ok()?;
+    let devs = mux.get_devices().await.ok()?;
+    let dev = match udid {
+        Some(want) => devs.into_iter().find(|d| d.udid == want)?,
+        None => devs.into_iter().next()?,
+    };
+    let provider = dev.to_provider(UsbmuxdAddr::default(), "phone-control");
+    let attempt = async {
+        let proxy = CoreDeviceProxy::connect(&provider).await.map_err(|e| e.to_string())?;
+        let rsd_port = proxy.tunnel_info().server_rsd_port;
+        let mut adapter = proxy.create_software_tunnel().map_err(|e| e.to_string())?.to_async_handle();
+        let rsd = adapter.connect(rsd_port).await.map_err(|e| e.to_string())?;
+        let handshake = RsdHandshake::new(rsd).await.map_err(|e| e.to_string())?;
+        Ok::<_, String>((adapter, handshake))
+    };
+    match tokio::time::timeout(std::time::Duration::from_secs(10), attempt).await {
+        Ok(Ok((adapter, handshake))) => Some((adapter, handshake, dev.udid)),
+        Ok(Err(e)) => {
+            eprintln!("usb tunnel failed ({e}), trying wifi");
+            None
+        }
+        Err(_) => {
+            eprintln!("usb tunnel timed out, trying wifi");
+            None
+        }
+    }
+}
+
+async fn wifi(udid: &str) -> Result<(AdapterHandle, RsdHandshake), String> {
+    let host = std::env::var("PHONE_IP").map_err(|_| {
+        "phone isn't plugged in. for wifi set PHONE_IP to its address \
+         (Settings > Wi-Fi > (i) on the phone), or plug it in"
+            .to_string()
+    })?;
+    let port: u16 = std::env::var("PHONE_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(49152);
+    let pairing = std::env::var("PHONE_PAIRING").unwrap_or_else(|_| format!("{PAIRING_DIR}/{udid}.plist"));
+    // a hostname like Erics-iPhone.local works too, macos resolves .local itself
+    let addr = tokio::net::lookup_host((host.as_str(), port))
+        .await
+        .map_err(|e| format!("can't resolve {host} ({e})"))?
+        .next()
+        .ok_or_else(|| format!("can't resolve {host}"))?;
+    wifi::tunnel(addr, &pairing).await
 }
 
 fn button_names() -> String {

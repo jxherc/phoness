@@ -22,6 +22,7 @@ idevice = { path = "../launcher/idevice", default-features = false, features = [
   "display_stream",
   "rsd",
   "tunnel_tcp_stack",
+  "remote_pairing",
 ] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "time", "net"] }
 uuid = { version = "1", features = ["v4"] }

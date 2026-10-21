@@ -1,8 +1,8 @@
 # phone — drive the phone from the mac
 
-a mac command-line tool that controls the iphone over usb, straight from this machine.
+a mac command-line tool that controls the iphone from this machine, over usb or wifi.
 no on-device app, no vpn, no iPhone Control. it uses coredevice, the same remote-control
-path xcode's device hub uses, so it works even while the phone is on its lock screen.
+path xcode's device hub uses.
 
 made for testing phone apps: screenshot the screen, tap, swipe, type, press hardware buttons.
 
@@ -13,8 +13,16 @@ target/release/phone shot s.png
 target/release/phone tap 300 900
 ```
 
-more than one device plugged in? `UDID=<udid> target/release/phone ...`. with none set it
-takes the first device usbmuxd lists, which may be an ipad.
+it uses usb when usbmuxd sees the phone. otherwise it goes over wifi, straight to the
+phone's remotepairingd with the pairing file `scripts/setup.sh` made:
+
+```
+PHONE_IP=192.168.2.103 target/release/phone info
+```
+
+`PHONE_IP` can also be a `.local` name. `PHONE_PORT` (default 49152) and `PHONE_PAIRING`
+(default `.pairing/<udid>.plist`) override the rest. with no `UDID` set it uses the one phone
+in `.pairing/`. with more than one, pass `UDID=<udid>`.
 
 ## commands
 
@@ -59,7 +67,14 @@ over usbmuxd it opens a coredevice tunnel to the phone, then rsd (the service li
 
 - input needs the screen-sharing gate, and ios refuses that while the phone is **on a call**
   or already mirroring/recording. screenshots still work then.
-- it drives the **lock screen** (wake, swipe, tap, buttons) but can't enter or get past the
-  passcode. that's the secure enclave, not something software gets around.
+- it can't enter or get past the passcode. that's the secure enclave.
+- the wifi path uses the same pairing file as the app. if the app's runner is up at the same
+  time, the two connections share one identity. not tested together.
 - needs the developer disk image mounted (open the phone in xcode once). developer mode on.
 - `text` is us-layout ascii. no ime, no emoji.
+
+## tested (2026-10-20, iphone 16 pro, ios 27.0.1)
+
+- `info` and `shot` over usb and over wifi
+- buttons: the phone's input daemon accepted the events. nothing visible confirmed they landed
+- tap, swipe, text, key: not tested yet
