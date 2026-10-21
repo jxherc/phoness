@@ -81,9 +81,15 @@ xcrun devicectl device install app --device $udid $products/Runner-Runner.app >/
 echo "installed Agent and its runner"
 
 echo "\n== pairing file to the app"
-xcrun devicectl device copy to --device $udid --domain-type appDataContainer --domain-identifier $bundle \
-  --source $pairing --destination "Library/Application Support/pairing.plist" -q
-echo "copied"
+# the app keeps this file locked away while the phone is locked, so the copy needs it unlocked
+if xcrun devicectl device copy to --device $udid --domain-type appDataContainer --domain-identifier $bundle \
+  --source $pairing --destination "Library/Application Support/pairing.plist" -q 2>/dev/null; then
+  echo "copied"
+else
+  echo "couldn't copy it, the phone was probably locked. unlock it and run this again."
+  echo "(an app that already had a pairing file keeps using it)"
+  exit 1
+fi
 
 cat <<'MSG'
 
