@@ -1,7 +1,9 @@
 # iphone computer use
 
 > [!WARNING]
-> this will need sideloading on iphone and a claude subscription (for now)
+> this needs sideloading on the iphone, and either an anthropic api key or a claude subscription.
+>
+> **the claude sign-in can get your claude account limited or banned.** it signs in with claude code's own oauth client and tells the api it's claude code, because that's the only way subscription requests go through. anthropic [limits subscription logins to its own apps](https://code.claude.com/docs/en/legal-and-compliance), so this goes against that. it's here because it works, not because it's allowed. use an api key if your account matters to you.
 >
 > only tried on one iphone so far (16 pro, ios 27.0.1).
 
@@ -77,3 +79,7 @@ this is an experimental compatibility flow using claude's public cli oauth clien
 - remotepairingd seems to need wifi on. that's what stikdebug says for the same path. not tried on cellular.
 - landscape hasn't been tested.
 - live claude oauth login, token refresh, and direct Opus 5.5 replies passed on 2026-10-20. the missing first client system block caused a generic HTTP 429 despite available subscription usage; adding it returned HTTP 200 both before and after refresh. the response confirmed included subscription usage was allowed while paid overage was disabled. the unchanged Swift client also streamed a reply and completed a `current_time` tool roundtrip with all four tool definitions in a temporary macOS test harness. simulator and device builds passed; the latest simulator screen check was blocked by Xcode's device viewer startup. physical-phone behavior remains unverified. a [matching reproduction](https://github.com/anthropics/claude-code/issues/87420) documents the same request requirement.
+
+## license
+
+mit, see [LICENSE](LICENSE). `launcher/idevice/` is [idevice](https://github.com/jkcoxson/idevice) by jackson coxson, also mit ([its license](launcher/idevice/LICENSE.txt)), with one small patch.
