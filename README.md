@@ -1,5 +1,7 @@
 # iphone computer use
 
+[简体中文](README.zh-Hans.md)
+
 > [!WARNING]
 > this needs sideloading on the iphone, and either an anthropic api key or a claude subscription.
 >
