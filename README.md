@@ -13,7 +13,7 @@ an agent that runs on the iphone or ipad and drives any app on it. it looks at t
 
 remake of [finn voorhees' demo](https://x.com/finnvoorhees/status/2108279639538012265).
 
-<p align="center"><img src="docs/demo.gif" width="480" alt="asking the agent whether to bring an umbrella. it opens the weather app, checks today and tomorrow, and answers in the chat"></p>
+<p align="center"><img src="docs/demo.gif" width="320" alt="asking the agent whether to bring an umbrella. it opens the weather app, checks today and tomorrow, and answers in the chat"></p>
 
 ## how it works
 

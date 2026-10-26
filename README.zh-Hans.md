@@ -13,7 +13,7 @@
 
 复刻自 [finn voorhees 的 demo](https://x.com/finnvoorhees/status/2108279639538012265)。
 
-<p align="center"><img src="docs/demo.gif" width="480" alt="问 agent 要不要带伞。它打开天气 app，查了今天和明天，然后在聊天里回答"></p>
+<p align="center"><img src="docs/demo.gif" width="320" alt="问 agent 要不要带伞。它打开天气 app，查了今天和明天，然后在聊天里回答"></p>
 
 ## 工作原理
 
