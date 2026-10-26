@@ -3,7 +3,7 @@
 [english](README.md)
 
 > [!WARNING]
-> 需要在 iphone 上侧载，还需要一个 anthropic api key 或者 claude 订阅。
+> 需要在 iphone 上侧载，还需要一个 api key（anthropic、openai、gemini、openrouter 等都行）或者 claude 订阅。
 >
 > **用 claude 登录可能会让你的 claude 账号被限制或封号。** 它用 claude code 自己的 oauth client 登录，并告诉 api 自己是 claude code，因为只有这样订阅请求才能通过。anthropic [规定订阅账号只能登录它自家的应用](https://code.claude.com/docs/en/legal-and-compliance)，所以这样做是违反规定的。留着它是因为能用，不是因为允许这么做。如果你在乎自己的账号，就用 api key。
 >
@@ -17,7 +17,7 @@
 
 ## 工作原理
 
-- `App/` 是聊天 app。它通过 messages api 把你的消息发给 claude（流式，因为没有 swift sdk，所以直接发原始 http），带四个工具：`phone_look`、`phone_act`、`phone_apps`、`current_time`。回复进行时，它会向 ios 申请一个 continued processing task（就是带停止按钮的“Replying”胶囊），这样别的 app 在前台时它也能继续干活。
+- `App/` 是聊天 app。它把你的消息发给你选的模型（流式，因为没有 swift sdk，所以直接发原始 http），带四个工具：`phone_look`、`phone_act`、`phone_apps`、`current_time`。回复进行时，它会向 ios 申请一个 continued processing task（就是带停止按钮的“Replying”胶囊），这样别的 app 在前台时它也能继续干活。claude 走 anthropic 的 messages api，其他服务商都走 openai 风格的 chat completions api，由 `App/OpenAI.swift` 来回转换。
 - `Runner/` 是一个永远不会结束的 ui 测试。它在 `127.0.0.1:8123` 上提供 http 服务：`/look`（截图 + 带点击位置的可读元素）、`/act`（tap、double_tap、long_press、swipe、type、key、home、open_app、open_url、wait）、`/apps`、`/known`、`/status`、`/stop`。每个请求都要带 `x-runner-token` header，post 请求必须是 json。在 ios 上，只有 xctest 能碰别的 app。
 - `launcher/` 是基于 [idevice](https://github.com/jkcoxson/idevice) 的 rust 静态库。它直接在手机上启动这个 runner：先通过 vpn 建一条到手机自己的 `remotepairingd` 的 remote pairing 隧道（xcode 走 wifi 时用的就是它），需要的话挂载开发者磁盘镜像，然后通过 testmanagerd 启动 runner，全程都在这条隧道里。“Enter iPhone Passcode for XCTest”这个提示就是这么来的。iOS 27 的 lockdownd 会断掉从 vpn 进来的连接，所以以前走 lockdownd 的路子已经不通了（[原因](wiki/lessons/ios27-lockdownd-vpn.md)）。
 - `Tunnel/` 是回环的 packet tunnel。发往 `10.7.0.1` 的包会把 src 和 dst 对调，再直接送回去，这样手机上的服务看到的就是一台从外面连进来的电脑。localdevvpn 和 stosvpn 用的也是这招，stikdebug 用的就是它们。用免费 apple 账号时，app 会改用 localdevvpn（见“安装”）。
@@ -54,7 +54,17 @@ FREE_ACCOUNT=1 ./scripts/setup.sh
 
 脚本会把 remote pairing 文件写到 `.pairing/<udid>.plist`（只有你能读），把 xcode 里的开发者磁盘镜像复制到 `App/Resources/Device/DDI/`，构建并安装 app 和 runner，最后把配对文件复制到手机上 app 自己的存储里。配对文件相当于这台手机的已配对主机凭证，所以它永远不会进 app bundle 或 git，app 也会把它排除在备份之外。旧版配置生成的配对文件（lockdown 那种）会被拒绝，并提示“run scripts/setup.sh again”。iphone 和 ipad 都在的话，脚本不会自己猜：用 `DEVICE=ipad ./scripts/setup.sh`（或者 `DEVICE=iphone`，或者 `UDID=<udid>`）。
 
-在设备上：打开 Agent，点模型名，添加 anthropic api key 或者用下面实验性的 claude 登录，然后点 iPhone Control（ipad 上是 iPad Control）> Turn On。允许添加 vpn，iOS 为“XCTest”要密码时输入你的密码。
+在设备上：打开 Agent，点模型名，选一个服务商并添加它的 api key（或者用下面实验性的 claude 登录），然后点 iPhone Control（ipad 上是 iPad Control）> Turn On。允许添加 vpn，iOS 为“XCTest”要密码时输入你的密码。
+
+## 服务商
+
+点模型名，选服务商、模型，再填这个服务商的 api key。每个服务商的 key 单独存在钥匙串里，也会记住它上次用的模型。
+
+- anthropic：claude，用 api key 或者下面的 claude 登录
+- openai、google gemini、xai、openrouter、deepseek、mistral、groq、moonshot（kimi）：填这个服务商的 api key
+- custom：任何兼容 openai 的服务器，你自己的也行。填 base url（比如 `https://example.com/v1`）、模型 id，需要的话再填 key
+
+列表里只有能看图的模型，因为 agent 是看截图干活的。这些模型在 2026-10-26 对照 [models.dev](https://models.dev) 核对过。列表下面的模型 id 栏可以填这个服务商的任何其他 id。服务商和它们的 url 参照了 [pi](https://github.com/earendil-works/pi) 的列表。
 
 ## claude 登录
 
@@ -73,6 +83,7 @@ FREE_ACCOUNT=1 ./scripts/setup.sh
 - `cargo run --release --example mac -- <phone ip> 49152 .pairing/<udid>.plist App/Resources/Device/DDI <app id>.runner.xctrunner`（在 `launcher/` 里运行）会在 mac 上对同一 wifi 下的手机跑完整的设备端启动流程。手机的 ip 和端口可以先用 `dns-sd -B _remotepairing._tcp`，再用 `dns-sd -L <name> _remotepairing._tcp` 查到。
 - `setup/target/release/phonelog <udid> "lockdownd|remotepairingd|Agent["` 会实时输出过滤后的手机 syslog。app 会把 `launcher.log` 写在它的配对文件旁边。
 - `./scripts/test-auth.sh` 会用模拟的响应检查 oauth 协议和 token 生命周期，不会用到你的钥匙串或真实账号。
+- `./scripts/test-api.sh` 用预设的响应检查兼容 openai 的客户端：历史记录的双向转换、流式输出、各服务商的特殊要求和报错。
 
 ## 限制
 
@@ -86,6 +97,7 @@ FREE_ACCOUNT=1 ./scripts/setup.sh
 - vpn 打开时，手机上任何 app 都能连到 `10.7.0.1` 上的 remotepairingd。握手之后想做任何事都需要配对文件。app 会随 iPhone Control 一起关掉 vpn。
 - remotepairingd 似乎需要打开 wifi。stikdebug 对同一条路径也是这么说的。没在蜂窝网络下试过。
 - 横屏还没测过。
+- 其他服务商：2026-10-26 兼容 openai 的那条路跑通了一次真实的工具循环，带截图，通过本机的代理连到 gemini 3.8 flash 和 claude sonnet 4.6，一次在 mac 的测试 harness 里，一次在模拟器的 app 里（它打开了设置，看了屏幕，答对了）。列表里每个服务商的接口都对一个编出来的 key 返回了清楚的报错，所以 url 是对的。openai、gemini、xai、openrouter、deepseek、mistral、groq、moonshot 都没用真实 key 试过，所以它们的回复还没测。xai 把它的 chat completions api 标成了已弃用，没给停用日期。
 - 2026-10-20 测试通过了真实的 claude oauth 登录、token 刷新和直接用 Opus 5.5 回复。缺少开头的客户端 system block 时，即使订阅还有可用额度，也会返回一个笼统的 HTTP 429；加上之后，刷新前后都返回 HTTP 200。响应确认了订阅内含的用量可以用，付费超额用量是关闭的。没改过的 Swift 客户端也在一个临时的 macOS 测试 harness 里流式输出了回复，并带着全部四个工具定义完成了一次 `current_time` 工具调用往返。模拟器和真机构建都通过了；最近一次模拟器屏幕检查卡在了 Xcode device viewer 的启动上。真机上的实际表现仍未验证。一个[吻合的复现](https://github.com/anthropics/claude-code/issues/87420)记录了同样的请求要求。
 
 ## 许可证

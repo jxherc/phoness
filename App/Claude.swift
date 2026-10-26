@@ -3,7 +3,7 @@ import Foundation
 // messages api over raw http + sse. there's no official swift sdk.
 // content blocks stay as plain json dicts so thinking/tool_use go back to the api untouched.
 @MainActor
-struct Claude {
+struct Claude: LLM {
     var model: String
     var auth: ClaudeAuth
     var session: URLSession
@@ -16,12 +16,6 @@ struct Claude {
         self.session = session
         // A run must not switch billing methods when the user signs out mid-request.
         usesOAuth = auth.isSignedIn
-    }
-
-    enum Event {
-        case text(String)
-        case thinking
-        case tool(String)
     }
 
     struct Failure: LocalizedError {
@@ -41,7 +35,7 @@ struct Claude {
         system: String,
         tools: [[String: Any]],
         messages: [[String: Any]],
-        on: @MainActor (Event) -> Void
+        on: @MainActor (LLMEvent) -> Void
     ) async throws -> (content: [[String: Any]], stop: String) {
         let fallbacks = !Self.noFallbacks.contains(model)
         var systemBlocks = [["type": "text", "text": system]]
@@ -56,7 +50,7 @@ struct Claude {
             "thinking": ["type": "adaptive"],
             "system": systemBlocks,
             "tools": tools,
-            "messages": messages,
+            "messages": Self.clean(messages),
             // caches everything up to the last block, saves a lot on long runs
             "cache_control": ["type": "ephemeral"],
         ]
@@ -131,7 +125,7 @@ struct Claude {
     }
 
     @MainActor
-    private func read(_ bytes: URLSession.AsyncBytes, on: @MainActor (Event) -> Void) async throws
+    private func read(_ bytes: URLSession.AsyncBytes, on: @MainActor (LLMEvent) -> Void) async throws
         -> (content: [[String: Any]], stop: String)
     {
         var blocks: [[String: Any]] = []
@@ -193,6 +187,27 @@ struct Claude {
         let declined: Set<String> = ["thinking", "redacted_thinking", "tool_use", "server_tool_use"]
         return blocks.enumerated().compactMap { i, b in
             i < cut && declined.contains(b["type"] as? String ?? "") ? nil : b
+        }
+    }
+
+    // turns from other providers carry their own blocks and fields, and tool ids anthropic refuses
+    static func clean(_ messages: [[String: Any]]) -> [[String: Any]] {
+        messages.map { m in
+            guard let content = m["content"] as? [[String: Any]] else { return m }
+            var m = m
+            m["content"] = content.compactMap { b -> [String: Any]? in
+                if b["type"] as? String == "reasoning" { return nil }
+                var b = b
+                b["via"] = nil
+                b["extra_content"] = nil
+                for k in ["id", "tool_use_id"] {
+                    guard let id = b[k] as? String else { continue }
+                    let safe = String(id.map { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") ? $0 : "_" })
+                    b[k] = safe.isEmpty ? "tool" : safe
+                }
+                return b
+            }
+            return m
         }
     }
 

@@ -1,6 +1,6 @@
 import Foundation
 
-// tools claude gets. phone_* go to the runner over loopback http.
+// tools the model gets. phone_* go to the runner over loopback http.
 @MainActor
 enum Tools {
     struct Output {

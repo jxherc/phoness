@@ -6,100 +6,59 @@ struct SettingsView: View {
     @Environment(\.openURL) private var openURL
     @State private var control = Control.shared
     @State private var auth = ClaudeAuth.shared
-    @State private var key = Keychain.get("anthropic") ?? ""
+    @AppStorage("provider") private var provider = Providers.all[0].id
+    @AppStorage("model") private var model = Providers.all[0].models[0].id
+    @AppStorage("custom.url") private var customURL = ""
+    // one keychain item per provider, named by its id. anthropic's was always "anthropic"
+    @State private var key = Keychain.get(Providers.current.id) ?? ""
     @State private var loginCode = ""
     @State private var loginError: String?
     @State private var keyError: String?
-    @AppStorage("model") private var model = Models.all[0].id
+
+    private var p: Provider { Providers.find(provider) }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    if auth.isSignedIn {
-                        Text("signed in")
-                        Button("sign out", role: .destructive) {
-                            do {
-                                try auth.signOut()
-                                loginCode = ""
-                                loginError = nil
-                            } catch {
-                                loginError = error.localizedDescription
-                            }
+                    Picker("Provider", selection: $provider) {
+                        ForEach(Providers.all) { Text($0.name).tag($0.id) }
+                    }
+                    .pickerStyle(.navigationLink)
+                    if !p.models.isEmpty {
+                        Picker("Model", selection: $model) {
+                            ForEach(p.models, id: \.id) { Text($0.name).tag($0.id) }
                         }
-                        .accessibilityIdentifier("claude.signOut")
-                    } else if auth.pendingLogin {
-                        Text("finish signing in in your browser, then paste the code here.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                        SecureField("authorization code", text: $loginCode)
+                        .pickerStyle(.navigationLink)
+                    }
+                    TextField("model id", text: $model)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        .accessibilityLabel("Model ID")
+                } header: {
+                    Text("Model")
+                }
+
+                if p.api == .anthropic { claudeLogin }
+
+                if p.id == "custom" {
+                    Section("Server") {
+                        TextField("https://example.com/v1", text: $customURL)
+                            .keyboardType(.URL)
                             .autocorrectionDisabled()
                             .textInputAutocapitalization(.never)
-                            .disabled(auth.isExchanging)
-                            .accessibilityIdentifier("claude.code")
-                        Button {
-                            loginError = nil
-                            Task {
-                                do {
-                                    try await auth.finishSignIn(loginCode)
-                                    loginCode = ""
-                                } catch {
-                                    loginError = error.localizedDescription
-                                }
-                            }
-                        } label: {
-                            HStack {
-                                Text(auth.isExchanging ? "signing in…" : "finish sign in")
-                                if auth.isExchanging { ProgressView().controlSize(.small) }
-                            }
-                        }
-                        .disabled(auth.isExchanging || loginCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .accessibilityIdentifier("claude.finish")
-                        if let url = auth.authorizationURL {
-                            Button("reopen browser") { openLogin(url) }
-                                .disabled(auth.isExchanging)
-                        }
-                        Button("cancel sign in", role: .cancel) {
-                            do {
-                                try auth.cancelSignIn()
-                                loginCode = ""
-                                loginError = nil
-                            } catch {
-                                loginError = error.localizedDescription
-                            }
-                        }
-                        .disabled(auth.isExchanging)
-                        .accessibilityIdentifier("claude.cancel")
-                    } else {
-                        Button("sign in with claude") {
-                            do {
-                                loginError = nil
-                                openLogin(try auth.beginSignIn())
-                            } catch {
-                                loginError = error.localizedDescription
-                            }
-                        }
-                        .accessibilityIdentifier("claude.signIn")
+                            .accessibilityLabel("Base URL")
                     }
-                    if let loginError {
-                        Text(loginError)
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                    }
-                } header: {
-                    Text("claude login")
-                } footer: {
-                    Text("experimental. anthropic may reject subscription access from this app, even after sign in.")
                 }
 
                 Section {
-                    SecureField("sk-ant-…", text: $key)
+                    SecureField(p.hint, text: $key)
                         .textContentType(.password)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                         .onChange(of: key) {
                             do {
-                                try Keychain.set("anthropic", key.trimmingCharacters(in: .whitespacesAndNewlines))
+                                try Keychain.set(provider, key.trimmingCharacters(in: .whitespacesAndNewlines))
                                 keyError = nil
                             } catch {
                                 keyError = error.localizedDescription
@@ -111,9 +70,11 @@ struct SettingsView: View {
                             .foregroundStyle(.red)
                     }
                 } header: {
-                    Text("Anthropic API key")
+                    Text("\(p.name) API key")
                 } footer: {
-                    Text("kept in the keychain on this \(Device.name). used when signed out of claude.")
+                    Text(p.api == .anthropic
+                        ? "kept in the keychain on this \(Device.name). used when signed out of claude."
+                        : "kept in the keychain on this \(Device.name).")
                 }
 
                 Section("Agent") {
@@ -127,13 +88,6 @@ struct SettingsView: View {
                         }
                     }
                 }
-
-                Section("Model") {
-                    Picker("Model", selection: $model) {
-                        ForEach(Models.all, id: \.id) { Text($0.name).tag($0.id) }
-                    }
-                    .pickerStyle(.navigationLink)
-                }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -142,6 +96,92 @@ struct SettingsView: View {
                     Button("Done") { dismiss() }
                 }
             }
+            // each provider keeps its own model and key
+            .onChange(of: provider) { old, new in
+                UserDefaults.standard.set(model, forKey: "model.\(old)")
+                model = Providers.remembered(Providers.find(new))
+                key = Keychain.get(new) ?? ""
+                keyError = nil
+            }
+        }
+    }
+
+    private var claudeLogin: some View {
+        Section {
+            if auth.isSignedIn {
+                Text("signed in")
+                Button("sign out", role: .destructive) {
+                    do {
+                        try auth.signOut()
+                        loginCode = ""
+                        loginError = nil
+                    } catch {
+                        loginError = error.localizedDescription
+                    }
+                }
+                .accessibilityIdentifier("claude.signOut")
+            } else if auth.pendingLogin {
+                Text("finish signing in in your browser, then paste the code here.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                SecureField("authorization code", text: $loginCode)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .disabled(auth.isExchanging)
+                    .accessibilityIdentifier("claude.code")
+                Button {
+                    loginError = nil
+                    Task {
+                        do {
+                            try await auth.finishSignIn(loginCode)
+                            loginCode = ""
+                        } catch {
+                            loginError = error.localizedDescription
+                        }
+                    }
+                } label: {
+                    HStack {
+                        Text(auth.isExchanging ? "signing in…" : "finish sign in")
+                        if auth.isExchanging { ProgressView().controlSize(.small) }
+                    }
+                }
+                .disabled(auth.isExchanging || loginCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityIdentifier("claude.finish")
+                if let url = auth.authorizationURL {
+                    Button("reopen browser") { openLogin(url) }
+                        .disabled(auth.isExchanging)
+                }
+                Button("cancel sign in", role: .cancel) {
+                    do {
+                        try auth.cancelSignIn()
+                        loginCode = ""
+                        loginError = nil
+                    } catch {
+                        loginError = error.localizedDescription
+                    }
+                }
+                .disabled(auth.isExchanging)
+                .accessibilityIdentifier("claude.cancel")
+            } else {
+                Button("sign in with claude") {
+                    do {
+                        loginError = nil
+                        openLogin(try auth.beginSignIn())
+                    } catch {
+                        loginError = error.localizedDescription
+                    }
+                }
+                .accessibilityIdentifier("claude.signIn")
+            }
+            if let loginError {
+                Text(loginError)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
+        } header: {
+            Text("claude login")
+        } footer: {
+            Text("experimental. anthropic may reject subscription access from this app, even after sign in.")
         }
     }
 

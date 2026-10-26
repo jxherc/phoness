@@ -34,8 +34,6 @@ final class Agent {
 
     init() { load() }
 
-    var model: String { UserDefaults.standard.string(forKey: "model") ?? Models.all[0].id }
-
     // MARK: run
 
     func send(_ text: String) {
@@ -80,7 +78,7 @@ final class Agent {
     }
 
     private func loop() async {
-        let claude = Claude(model: model)
+        let llm = Providers.client()
 
         // hard cap so a confused run can't go forever
         for _ in 0..<Self.maxSteps {
@@ -92,7 +90,7 @@ final class Agent {
             var live: Int?
             let res: (content: [[String: Any]], stop: String)
             do {
-                res = try await claude.send(system: Self.system, tools: Tools.defs, messages: messages) { ev in
+                res = try await llm.send(system: Self.system, tools: Tools.defs, messages: messages) { ev in
                     switch ev {
                     case .text(let t):
                         if live == nil {
@@ -127,7 +125,7 @@ final class Agent {
             case "refusal":
                 // a declined turn's partial output isn't meant to be used, keep it out of the history
                 if let live, live < items.count, items[live].kind == .assistant { items.remove(at: live) }
-                items.append(Item(kind: .error, text: "Claude declined this request."))
+                items.append(Item(kind: .error, text: "The model declined this request."))
                 return
             case "max_tokens":
                 keepFinished(res.content)
@@ -392,15 +390,4 @@ final class Agent {
 enum Device {
     static let name = UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
     static let symbol = UIDevice.current.userInterfaceIdiom == .pad ? "ipad.gen2" : "iphone.gen3"
-}
-
-enum Models {
-    static let all: [(id: String, name: String)] = [
-        ("claude-opus-5-5", "Claude Opus 5.5"),
-        ("claude-sonnet-5-5", "Claude Sonnet 5.5"),
-        ("claude-haiku-5-5", "Claude Haiku 5.5"),
-        ("claude-fable-5-1", "Claude Fable 5.1"),
-    ]
-
-    static func name(_ id: String) -> String { all.first { $0.id == id }?.name ?? id }
 }

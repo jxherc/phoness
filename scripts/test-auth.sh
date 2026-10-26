@@ -6,5 +6,5 @@ if ! xcodebuild -version >/dev/null 2>&1; then
 fi
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-xcrun --sdk macosx swiftc -parse-as-library App/Keychain.swift App/ClaudeAuth.swift App/Claude.swift Tests/ClaudeAuthTests.swift -o "$work/test-auth"
+xcrun --sdk macosx swiftc -parse-as-library App/Keychain.swift App/ClaudeAuth.swift App/Claude.swift App/OpenAI.swift App/Providers.swift Tests/ClaudeAuthTests.swift -o "$work/test-auth"
 "$work/test-auth"

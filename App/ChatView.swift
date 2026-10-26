@@ -2,8 +2,9 @@ import SwiftUI
 
 struct ChatView: View {
     @State private var agent = Agent.shared
-    // watched here so the header changes as soon as settings does (agent.model reads defaults directly)
-    @AppStorage("model") private var model = Models.all[0].id
+    // watched here so the header changes as soon as settings does (the agent reads defaults directly)
+    @AppStorage("provider") private var provider = Providers.all[0].id
+    @AppStorage("model") private var model = Providers.all[0].models[0].id
     @State private var draft = ""
     // swapped on every send so the text field starts empty (see send())
     @State private var field = UUID()
@@ -93,7 +94,7 @@ struct ChatView: View {
                         .frame(width: 44, height: 44)
                         .background(Color(white: 0.36), in: .circle)
                     HStack(spacing: 2) {
-                        Text(Models.name(model))
+                        Text(Providers.find(provider).modelName(model))
                             .lineLimit(1)
                         Image(systemName: "chevron.right")
                             .font(.system(size: 8, weight: .bold))
@@ -109,7 +110,7 @@ struct ChatView: View {
             }
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity)
-            .accessibilityLabel("\(Models.name(model)), settings")
+            .accessibilityLabel("\(Providers.find(provider).modelName(model)), settings")
 
             Button {
                 agent.reset()
