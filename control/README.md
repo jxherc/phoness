@@ -53,6 +53,21 @@ echo 'text hello' >&3
 echo 'quit' >&3
 ```
 
+## mcp mode (for claude code)
+
+`phone mcp` is the same set of commands as an mcp server on stdin/stdout: `screenshot`, `tap`,
+`swipe`, `text`, `key`, `button`, `info`. screenshots come back as jpeg images shrunk to claude's
+standard image limits (1568 px long edge, 1568 visual tokens), so no model shrinks them again.
+that's 721x1568 on a 16 pro. `tap` and `swipe` take coords in that image's pixels, not the screen's.
+
+it connects on the first tool call, and again after a call fails, so it can start with the phone
+unplugged. the plugin in `../plugin` runs it from your PATH. without the plugin:
+
+```
+claude mcp add phone -- "$PWD/target/release/phone" mcp
+claude mcp add phone -e PHONE_IP=192.168.2.103 -- "$PWD/target/release/phone" mcp   # wifi
+```
+
 ## how it works
 
 over usbmuxd it opens a coredevice tunnel to the phone, then rsd (the service list) inside it.

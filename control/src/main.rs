@@ -3,6 +3,7 @@
 // pairing file setup.sh made: PHONE_IP=192.168.2.103 phone shot s.png
 //
 //   phone serve                 read commands on stdin, one per line (for an agent)
+//   phone mcp                   the same commands as an mcp server, for claude code
 //   phone shot out.png          save a screenshot and print its size
 //   phone tap 200 400           tap at pixel 200,400 (of the last/again-taken screenshot)
 //   phone swipe 200 600 200 200 swipe between two pixels
@@ -17,6 +18,7 @@
 // works with the phone on the lock screen: it can wake it, swipe, tap and press
 // buttons there. it can't enter or get past the passcode, and nothing in software can.
 
+mod mcp;
 mod stream;
 mod wifi;
 
@@ -359,6 +361,12 @@ async fn run(phone: &mut Phone, line: &str) -> String {
 async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let udid = std::env::var("UDID").ok();
+
+    // mcp connects on the first tool call, so claude code can start it with the phone unplugged
+    if args.first().is_some_and(|a| a == "mcp") {
+        mcp::serve(udid).await;
+        return;
+    }
 
     let mut phone = match Phone::connect(udid).await {
         Ok(p) => p,
