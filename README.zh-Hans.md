@@ -23,7 +23,7 @@
 - `Tunnel/` 是回环的 packet tunnel。发往 `10.7.0.1` 的包会把 src 和 dst 对调，再直接送回去，这样手机上的服务看到的就是一台从外面连进来的电脑。localdevvpn 和 stosvpn 用的也是这招，stikdebug 用的就是它们。用免费 apple 账号时，app 会改用 localdevvpn（见“安装”）。
 - `setup/` 是一个小的 mac 工具，只跑一次。它在连到手机的 usb 隧道里生成 remote pairing 文件，用的是自己单独的身份，所以 app 的配对和 mac 的配对是分开的。第一次运行时，手机可能会问你要不要信任这台电脑。
 - `control/` 是另一个独立的 mac 工具（`phone`），直接从这台机器通过 usb 操作手机，不需要手机上的 app，也不需要 vpn。截图、点击、滑动、打字、硬件按键都走 coredevice（xcode 的 device hub 用的就是它），所以锁屏时也能用。见 [control/README.md](control/README.md)。它是用来从 mac 操作和测试手机的；上面那个 app 才是跑在手机上的 agent。
-- `plugin/` 是做成 claude code skill 的同一个 `phone` 工具。用 `/plugin install phone --marketplace jxherc/phoness` 安装，记得先构建 `control/`，因为插件里不带二进制文件。
+- `plugin/` 把同一个 `phone` 工具做成 claude code 的 mcp 工具。claude 直接拿到截图，看着图点。用 `/plugin install phone --marketplace jxherc/phoness` 安装。它运行的是 `phone mcp`，所以要先构建 `control/`，再把 `phone` 放进 PATH，因为插件里不带二进制文件。
 
 ## 安装
 

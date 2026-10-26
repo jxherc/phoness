@@ -9,7 +9,7 @@
     {
       "name": "phone",
       "source": "./plugin",
-      "description": "drive a usb or wifi iphone from the mac with the phone cli: screenshot, tap, swipe, type, press buttons"
+      "description": "drive a usb or wifi iphone from the mac as mcp tools: screenshot, tap, swipe, type, press buttons"
     }
   ]
 }

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "phone": {
+      "command": "phone",
+      "args": ["mcp"]
+    }
+  }
+}

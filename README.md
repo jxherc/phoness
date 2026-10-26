@@ -23,7 +23,7 @@ remake of [finn voorhees' demo](https://x.com/finnvoorhees/status/21082796395380
 - `Tunnel/` loopback packet tunnel. packets to `10.7.0.1` get src and dst swapped and go straight back in, so the phone's services see a computer calling from outside. same trick as localdevvpn and stosvpn, which stikdebug uses. on a free apple account the app uses localdevvpn instead (see setup).
 - `setup/` small mac tool, run once. makes the remote pairing file inside a usb tunnel to the phone, with its own identity, so the app's pairing is separate from the mac's. the first time, the phone may ask to trust this computer.
 - `control/` a separate mac tool (`phone`) that drives the phone straight from this machine over usb, no on-device app and no vpn. screenshot, tap, swipe, type, hardware buttons, through coredevice (what xcode's device hub uses), so it works on the lock screen too. see [control/README.md](control/README.md). this is for driving and testing the phone from the mac; the app above is the on-device agent.
-- `plugin/` the same `phone` tool as a claude code skill. install it with `/plugin install phone --marketplace jxherc/phoness`, and build `control/` first, since the plugin doesn't ship the binary.
+- `plugin/` the same `phone` tool as mcp tools for claude code. claude gets the screenshots as images and taps on them. install it with `/plugin install phone --marketplace jxherc/phoness`. it runs `phone mcp`, so build `control/` and put `phone` on your PATH first, since the plugin doesn't ship the binary.
 
 ## setup
 
