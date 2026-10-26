@@ -60,7 +60,8 @@ final class Phone {
     // reusing these skips xctest's per-instance setup, which is slow
     private var cache: [String: XCUIApplication] = [:]
     private let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-    // springboard's frame is the whole screen, in points. refreshed per request for rotation
+    // the whole screen in points, as the last screenshot showed it. springboard's frame stays
+    // portrait when the screen turns (ipads in landscape), so look() takes it from the screenshot
     private var screen = CGSize(width: 1, height: 1)
 
     private func handleFor(_ id: String) -> XCUIApplication {
@@ -74,7 +75,9 @@ final class Phone {
     init() {
         Self.skipIdleWaits()
         known = Self.installedApps().map { $0["id"] ?? "" }.filter { !$0.isEmpty }
-        refreshScreen()
+        // a first guess for an act before any look
+        let s = springboard.frame.size
+        if s.width > 1, s.height > 1 { screen = s }
     }
 
     // xctest waits for an app to stop animating before every action. busy apps never do,
@@ -182,10 +185,9 @@ final class Phone {
         Phone.lastIssue = nil
         switch (req.method, req.path) {
         case ("GET", "/look"):
-            refreshScreen()
             return look()
         case ("POST", "/act"):
-            refreshScreen()
+            // the model's coords come from the last look, so that's the size to check them against
             return act(req.json)
         case ("GET", "/apps"):
             return .json(Self.installedApps())
@@ -200,11 +202,6 @@ final class Phone {
         }
     }
 
-    private func refreshScreen() {
-        let s = springboard.frame.size
-        if s.width > 1, s.height > 1 { screen = s }
-    }
-
     // MARK: look
 
     private func look() -> Server.Response {
@@ -212,6 +209,7 @@ final class Phone {
 
         // shrink to points so image pixels == tap coordinates
         let shot = XCUIScreen.main.screenshot().image
+        if shot.size.width > 1, shot.size.height > 1 { screen = shot.size }
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         let img = UIGraphicsImageRenderer(size: screen, format: format).image { _ in
@@ -221,7 +219,7 @@ final class Phone {
 
         var elements: String
         do {
-            elements = describe(try app.snapshot())
+            elements = describe(try app.snapshot(), in: app)
         } catch {
             elements = "(couldn't read elements: \(error.localizedDescription))"
         }
@@ -229,7 +227,7 @@ final class Phone {
         if app != springboard {
             let alert = springboard.alerts.firstMatch
             if alert.exists, let snap = try? alert.snapshot() {
-                elements += "\nsystem alert on top:\n" + describe(snap)
+                elements += "\nsystem alert on top:\n" + describe(snap, in: springboard)
             }
         }
         return .json([
@@ -296,12 +294,12 @@ final class Phone {
         return id
     }
 
-    private func describe(_ root: XCUIElementSnapshot) -> String {
+    private func describe(_ root: XCUIElementSnapshot, in app: XCUIApplication) -> String {
         let bounds = CGRect(origin: .zero, size: screen)
         var lines: [String] = []
         var keyboard = false
 
-        func walk(_ e: XCUIElementSnapshot, parentLabel: String) {
+        func walk(_ e: XCUIElementSnapshot, parentLabel: String, shift: CGPoint) {
             if lines.count >= 300 { return }
             let t = e.elementType
             if t == .keyboard {
@@ -314,7 +312,7 @@ final class Phone {
             let label = String(flat(e.label).prefix(80))
             let value = String(flat(e.value as? String ?? "").prefix(80))
             let hint = flat(e.placeholderValue ?? "")
-            let f = e.frame.intersection(bounds)
+            let f = e.frame.offsetBy(dx: shift.x, dy: shift.y).intersection(bounds)
 
             let named = !label.isEmpty || !value.isEmpty || !hint.isEmpty
             // unnamed cells and containers are just noise, their children carry the text
@@ -333,9 +331,20 @@ final class Phone {
                 line += " @ \(Int(f.midX)),\(Int(f.midY))"
                 if lines.last != line { lines.append(line) }
             }
-            for c in e.children { walk(c, parentLabel: label.isEmpty ? parentLabel : label) }
+            for c in e.children { walk(c, parentLabel: label.isEmpty ? parentLabel : label, shift: shift) }
         }
-        walk(root, parentLabel: "")
+        // on an ipad an app can sit in a window away from 0,0, and the snapshot puts each window
+        // at 0,0 anyway. the live window query knows where it really is on screen
+        var w = 0
+        for c in root.children {
+            var shift = CGPoint.zero
+            if c.elementType == .window {
+                let live = app.windows.element(boundBy: w).frame
+                w += 1
+                if c.frame.origin == .zero, live.width > 1 { shift = live.origin }
+            }
+            walk(c, parentLabel: "", shift: shift)
+        }
 
         if keyboard { lines.append("(keyboard is open)") }
         return lines.isEmpty ? "(no readable elements, use the screenshot)" : lines.joined(separator: "\n")
@@ -377,7 +386,9 @@ final class Phone {
     private func act(_ a: [String: Any]) -> Server.Response {
         let action = a["action"] as? String ?? ""
         let (app, _) = foreground()
-        let origin = app.coordinate(withNormalizedOffset: .zero)
+        // springboard covers the whole screen. the app in front doesn't on an ipad, where it can
+        // sit in a window away from 0,0, and coords from the screenshot are whole-screen
+        let origin = springboard.coordinate(withNormalizedOffset: .zero)
         // model input, so everything gets clamped before it touches xctest
         func num(_ k: String) -> Double? {
             guard let d = (a[k] as? NSNumber)?.doubleValue, d.isFinite else { return nil }
