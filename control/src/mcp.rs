@@ -3,13 +3,14 @@
 // screenshots go back as images, already shrunk to a size the model sees 1:1, and
 // tap/swipe take coords in that image's pixels. the model can't scale coords itself.
 
+use std::collections::HashMap;
 use std::io::Write as _;
 
 use base64::Engine as _;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-use super::{BUTTONS, MAX, Phone, parse_key};
+use super::{BUTTONS, MAX, Phone, devices, none_around, parse_key, pick};
 
 // claude's standard image limits: 1568 px on the long edge and 1568 visual tokens of 28x28 px.
 // anything bigger gets shrunk again before the model sees it, and then its coords stop matching
@@ -17,20 +18,30 @@ use super::{BUTTONS, MAX, Phone, parse_key};
 const VIEW: u32 = 1568;
 const TOKENS: u32 = 1568;
 
-const INSTRUCTIONS: &str = "drives the user's real iphone from this mac. take a screenshot before acting \
-and again after anything that changes the screen. tap and swipe coords are pixels of the last screenshot. \
-it can't get past the passcode, so ask the user to unlock the phone. input fails while the phone is on a \
-call or recording its screen; screenshots still work then.";
+const INSTRUCTIONS: &str = "drives the user's real iphone or ipad from this mac. take a screenshot before \
+acting and again after anything that changes the screen. tap and swipe coords are pixels of the last \
+screenshot of that device. with both around, pass device (iphone or ipad); later calls stay on it. \
+it can't get past the passcode, so ask the user to unlock it. input fails during a call or while the \
+screen is being recorded; screenshots still work then.";
 
-struct State {
-    udid: Option<String>,
+#[derive(Default)]
+struct Dev {
     phone: Option<Phone>,
     // size of the last image sent, for image pixels -> 0-65535
     view: Option<(u32, u32)>,
 }
 
+#[derive(Default)]
+struct State {
+    // UDID from the environment pins one device
+    udid: Option<String>,
+    // the device of the last call and its kind, so calls without `device` stay on it
+    last: Option<(String, Option<String>)>,
+    devs: HashMap<String, Dev>,
+}
+
 pub async fn serve(udid: Option<String>) {
-    let mut st = State { udid, phone: None, view: None };
+    let mut st = State { udid, ..Default::default() };
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     let mut stdout = std::io::stdout();
     while let Ok(Some(line)) = lines.next_line().await {
@@ -66,7 +77,11 @@ pub async fn serve(udid: Option<String>) {
 fn tools() -> Value {
     let xy = |d: &str| json!({ "type": "number", "description": d });
     let buttons: Vec<&str> = BUTTONS.iter().map(|(n, ..)| *n).collect();
-    json!([
+    let device = json!({
+        "type": "string", "enum": ["iphone", "ipad"],
+        "description": "which device, when both are around. later calls stay on it",
+    });
+    let mut tools = json!([
         {
             "name": "screenshot",
             "description": "screenshot the phone. tap and swipe coords are pixels of this image.",
@@ -111,23 +126,96 @@ fn tools() -> Value {
         },
         {
             "name": "info",
-            "description": "the phone's udid and real screen size in pixels.",
+            "description": "the iphones and ipads around (kind and udid), and the real screen size of the one in use.",
             "inputSchema": { "type": "object", "properties": {} },
             "annotations": { "readOnlyHint": true },
         },
-    ])
+    ]);
+    for t in tools.as_array_mut().unwrap() {
+        t["inputSchema"]["properties"]["device"] = device.clone();
+    }
+    tools
 }
 
 fn text(s: &str) -> Value {
     json!({ "type": "text", "text": s })
 }
 
+// which device this call is for: UDID from the environment, then `device`, then the last one,
+// then the only one around
+async fn target(st: &State, want: Option<&str>) -> Result<(String, Option<String>), String> {
+    if let Some(u) = &st.udid {
+        return Ok((u.clone(), None));
+    }
+    if let Some((u, kind)) = &st.last
+        && (want.is_none() || want == kind.as_deref())
+    {
+        return Ok((u.clone(), kind.clone()));
+    }
+    let udid = pick(None, want, "device: iphone or ipad").await?;
+    let kind = match want {
+        Some(k) => Some(k.to_string()),
+        None => devices().await.into_iter().find(|(u, _)| *u == udid).and_then(|(_, k)| k),
+    };
+    Ok((udid, kind))
+}
+
+// info lists what's around instead of failing when it can't tell which one is meant
+async fn info(st: &mut State, want: Option<&str>) -> Result<Vec<Value>, String> {
+    let found = devices().await;
+    let mut lines: Vec<String> =
+        found.iter().map(|(u, k)| format!("{} {u}", k.as_deref().unwrap_or("device"))).collect();
+    if lines.is_empty() {
+        return Err(none_around());
+    }
+    // the size needs a connection. if that fails, still show what's around
+    match target(st, want).await {
+        Ok((udid, kind)) => match size(st, &udid).await {
+            Ok((w, h)) => {
+                lines.push(format!("in use: {udid}, screen {w}x{h}"));
+                st.last = Some((udid, kind));
+            }
+            Err(e) => lines.push(format!("{udid}: {e}")),
+        },
+        Err(e) => lines.push(e),
+    }
+    Ok(vec![text(&lines.join("\n"))])
+}
+
+async fn size(st: &mut State, udid: &str) -> Result<(u32, u32), String> {
+    let dev = st.devs.entry(udid.to_string()).or_default();
+    if dev.phone.is_none() {
+        dev.phone = Some(Phone::connect(udid.to_string()).await?);
+    }
+    let phone = dev.phone.as_mut().unwrap();
+    if phone.size.is_none()
+        && let Err(e) = phone.screenshot().await
+    {
+        dev.phone = None;
+        return Err(e);
+    }
+    Ok(phone.size.unwrap_or((0, 0)))
+}
+
 async fn call(st: &mut State, name: &str, a: &Value) -> Result<Vec<Value>, String> {
     let num = |k: &str| a[k].as_f64().ok_or(format!("{k} must be a number"));
     let s = |k: &str| a[k].as_str().ok_or(format!("{k} must be a string"));
+    let want = match a["device"].as_str() {
+        Some(k @ ("iphone" | "ipad")) => Some(k),
+        Some(other) => return Err(format!("device is iphone or ipad, not '{other}'")),
+        None => None,
+    };
+    if name == "info" {
+        return info(st, want).await;
+    }
+    if !["screenshot", "tap", "swipe", "text", "key", "button"].contains(&name) {
+        return Err(format!("unknown tool '{name}'"));
+    }
+    let (udid, kind) = target(st, want).await?;
+    let view = st.devs.get(&udid).and_then(|d| d.view);
     // image pixels -> 0-65535
     let norm = |x: f64, y: f64| {
-        let (w, h) = st.view.ok_or("take a screenshot first. tap and swipe coords are pixels of it")?;
+        let (w, h) = view.ok_or("take a screenshot of this device first. tap and swipe coords are pixels of it")?;
         let n = |v: f64, size: u32| (v / size as f64 * MAX).round().clamp(0.0, MAX) as u16;
         Ok::<_, String>((n(x, w), n(y, h)))
     };
@@ -142,46 +230,38 @@ async fn call(st: &mut State, name: &str, a: &Value) -> Result<Vec<Value>, Strin
         "key" => parse_key(s("key")?).ok_or(format!("unknown key '{}'", s("key")?))?,
         _ => 0,
     };
-    if !["screenshot", "tap", "swipe", "text", "key", "button", "info"].contains(&name) {
-        return Err(format!("unknown tool '{name}'"));
-    }
 
-    if st.phone.is_none() {
-        st.phone = Some(Phone::connect(st.udid.clone()).await?);
+    let dev = st.devs.entry(udid.clone()).or_default();
+    if dev.phone.is_none() {
+        dev.phone = Some(Phone::connect(udid.clone()).await?);
     }
-    let phone = st.phone.as_mut().unwrap();
+    let label = kind.clone().unwrap_or("device".into());
+    st.last = Some((udid, kind));
+    let phone = dev.phone.as_mut().unwrap();
     let ok = |_| vec![text("ok")];
     let res = match name {
-        "screenshot" => shot(phone, &mut st.view).await,
+        "screenshot" => shot(phone, &mut dev.view, &label).await,
         "tap" => phone.tap(pts[0].0, pts[0].1).await.map(ok),
         "swipe" => phone.swipe(pts[0].0, pts[0].1, pts[1].0, pts[1].1).await.map(ok),
         "text" => phone.text(s("text")?).await.map(|n| vec![text(&format!("typed {n} characters"))]),
         "key" => phone.type_key(usage, false).await.map(ok),
-        "button" => phone.button(s("name")?).await.map(ok),
-        _ => match phone.size {
-            Some(_) => Ok(()),
-            None => phone.screenshot().await.map(|_| ()),
-        }
-        .map(|_| {
-            let (w, h) = phone.size.unwrap_or((0, 0));
-            vec![text(&format!("udid {}, screen {w}x{h}", phone.udid))]
-        }),
+        _ => phone.button(s("name")?).await.map(ok),
     };
     // a dead usb or wifi link never comes back on its own, so connect fresh next call
     if res.is_err() {
-        st.phone = None;
+        dev.phone = None;
     }
     res
 }
 
-async fn shot(phone: &mut Phone, view: &mut Option<(u32, u32)>) -> Result<Vec<Value>, String> {
+async fn shot(phone: &mut Phone, view: &mut Option<(u32, u32)>, kind: &str) -> Result<Vec<Value>, String> {
     let png = phone.screenshot().await?;
     let (w, h) = phone.size.ok_or("the screenshot wasn't a png")?;
     let (jpg, vw, vh) = shrink(&png, w, h)?;
     *view = Some((vw, vh));
     Ok(vec![
         json!({ "type": "image", "data": base64::engine::general_purpose::STANDARD.encode(&jpg), "mimeType": "image/jpeg" }),
-        text(&format!("{vw}x{vh} image of the {w}x{h} screen. tap and swipe use this image's pixels")),
+        text(&format!("{vw}x{vh} image of the {kind}'s {w}x{h} screen. tap and swipe use this image's pixels")),
     ])
 }
 

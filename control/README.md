@@ -1,6 +1,6 @@
 # phone — drive the phone from the mac
 
-a mac command-line tool that controls the iphone from this machine, over usb or wifi.
+a mac command-line tool that controls the iphone (or ipad) from this machine, over usb or wifi.
 no on-device app, no vpn, no iPhone Control. it uses coredevice, the same remote-control
 path xcode's device hub uses.
 
@@ -21,8 +21,16 @@ PHONE_IP=192.168.2.103 target/release/phone info
 ```
 
 `PHONE_IP` can also be a `.local` name. `PHONE_PORT` (default 49152) and `PHONE_PAIRING`
-(default `.pairing/<udid>.plist`) override the rest. with no `UDID` set it uses the one phone
-in `.pairing/`. with more than one, pass `UDID=<udid>`.
+(default `.pairing/<udid>.plist`) override the rest.
+
+with one device around it uses that one. with an iphone and an ipad it won't guess: say
+which with `DEVICE=iphone` or `DEVICE=ipad`, or `UDID=<udid>`. it asks each device what it is
+through usbmuxd, so that needs it plugged in or awake on the same wifi. a device that only has
+a pairing file counts when `PHONE_IP` is set, and needs `UDID`.
+
+```
+DEVICE=ipad target/release/phone shot ipad.png
+```
 
 ## commands
 
@@ -58,7 +66,12 @@ echo 'quit' >&3
 `phone mcp` is the same set of commands as an mcp server on stdin/stdout: `screenshot`, `tap`,
 `swipe`, `text`, `key`, `button`, `info`. screenshots come back as jpeg images shrunk to claude's
 standard image limits (1568 px long edge, 1568 visual tokens), so no model shrinks them again.
-that's 721x1568 on a 16 pro. `tap` and `swipe` take coords in that image's pixels, not the screen's.
+that's 721x1568 on a 16 pro and 1316x907 on an 11-inch ipad pro in landscape. `tap` and `swipe`
+take coords in that image's pixels, not the screen's.
+
+every tool takes an optional `device` (`iphone` or `ipad`). with both around, the first call
+needs it, and later calls stay on that device. each device keeps its own connection and its own
+last screenshot size. `info` lists what's around.
 
 it connects on the first tool call, and again after a call fails, so it can start with the phone
 unplugged. the plugin in `../plugin` runs it from your PATH. without the plugin:
@@ -90,6 +103,9 @@ over usbmuxd it opens a coredevice tunnel to the phone, then rsd (the service li
   time, the two connections share one identity. not tested together.
 - needs the developer disk image mounted (open the phone in xcode once). developer mode on.
 - `text` is us-layout ascii. no ime, no emoji.
+- landscape: screenshots turn with the screen, but taps and swipes on a landscape screen are
+  untested. the touch report may use the panel's own portrait layout, which would put them in
+  the wrong place.
 
 ## tested (2026-10-20, iphone 16 pro, ios 27.0.1)
 
@@ -99,3 +115,11 @@ over usbmuxd it opens a coredevice tunnel to the phone, then rsd (the service li
   `key backspace`, scrolled the chat, went back to the home screen
 - volume buttons: the phone's input daemon accepted them, nothing on screen confirmed it
 - input on the lock screen: not tested
+
+## tested (2026-10-26, iphone 16 pro and ipad pro 11-inch m4, ios 27.0.1)
+
+- with both on wifi sync: `info` lists them as iphone and ipad, `DEVICE` and `UDID` pick one,
+  and no `DEVICE` with both around stops with a message instead of guessing
+- over mcp: `device: ipad` picked the ipad and the next call without `device` stayed on it. its
+  screenshot came back at 1316x907 (landscape). `info` connected to the iphone and read its size
+- no input sent to the ipad yet

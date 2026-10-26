@@ -1,6 +1,7 @@
 // drive the phone from the mac, over usb or wifi. no on-device app, no vpn.
 // usb when usbmuxd sees the phone. otherwise wifi straight to its remotepairingd with the
 // pairing file setup.sh made: PHONE_IP=192.168.2.103 phone shot s.png
+// with an iphone and an ipad around, say which: DEVICE=ipad phone shot s.png (or UDID=...)
 //
 //   phone serve                 read commands on stdin, one per line (for an agent)
 //   phone mcp                   the same commands as an mcp server, for claude code
@@ -26,11 +27,13 @@ use std::io::Write as _;
 
 use idevice::{
     IdeviceService, RsdService,
+    provider::IdeviceProvider,
     core_device::{
         ImageFormat, IndigoHidClient, ScreenCaptureServiceClient, UniversalHidServiceClient,
         hid::ButtonState,
     },
     core_device_proxy::CoreDeviceProxy,
+    lockdown::LockdownClient,
     rsd::RsdHandshake,
     tcp::handle::AdapterHandle,
     usbmuxd::{UsbmuxdAddr, UsbmuxdConnection},
@@ -71,15 +74,12 @@ struct Phone {
 impl Phone {
     // usb when usbmuxd sees the phone (plugged in, or wifi sync while it's awake),
     // otherwise wifi straight to remotepairingd, which keeps answering while it's locked
-    async fn connect(udid: Option<String>) -> Result<Phone, String> {
-        // with no UDID, the phone scripts/setup.sh paired (usbmuxd lists ipads too)
-        let udid = udid.or_else(paired_udid);
-        let (adapter, handshake, udid, via) = match usb(udid.as_deref()).await {
-            Some((adapter, handshake, udid)) => (adapter, handshake, udid, "usb"),
+    async fn connect(udid: String) -> Result<Phone, String> {
+        let (adapter, handshake, via) = match usb(&udid).await {
+            Some((adapter, handshake)) => (adapter, handshake, "usb"),
             None => {
-                let udid = udid.ok_or("no phone plugged in and no pairing file in .pairing/. run scripts/setup.sh first")?;
                 let (adapter, handshake) = wifi(&udid).await?;
-                (adapter, handshake, udid, "wifi")
+                (adapter, handshake, "wifi")
             }
         };
         eprintln!("connected over {via}");
@@ -202,24 +202,89 @@ impl Phone {
 // setup.sh keeps one remote pairing file per phone in the repo's .pairing/
 const PAIRING_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../.pairing");
 
-fn paired_udid() -> Option<String> {
-    let files: Vec<String> = std::fs::read_dir(PAIRING_DIR)
-        .ok()?
-        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+fn paired_udids() -> Vec<String> {
+    let Ok(dir) = std::fs::read_dir(PAIRING_DIR) else { return vec![] };
+    dir.filter_map(|e| e.ok()?.file_name().into_string().ok())
         .filter_map(|n| n.strip_suffix(".plist").map(String::from))
-        .collect();
-    // more than one phone: make them say which with UDID
-    if files.len() == 1 { files.into_iter().next() } else { None }
+        .collect()
+}
+
+// every device around, with "iphone"/"ipad" when usbmuxd can ask it. phones that only have a
+// pairing file count when PHONE_IP is set (nothing else reaches them), and have no kind
+async fn devices() -> Vec<(String, Option<String>)> {
+    let mut out: Vec<(String, Option<String>)> = vec![];
+    let listed = match UsbmuxdConnection::default().await {
+        Ok(mut mux) => mux.get_devices().await.unwrap_or_default(),
+        Err(_) => vec![],
+    };
+    for d in listed {
+        // a phone on the cable and on wifi sync is listed twice
+        if out.iter().any(|(u, _)| *u == d.udid) {
+            continue;
+        }
+        // ios 27 only answers DeviceClass inside a session. the mac's own pairing record from
+        // usbmuxd opens one, so this asks nothing of the phone
+        let provider = d.to_provider(UsbmuxdAddr::default(), "phone-control");
+        let ask = async {
+            let mut ld = LockdownClient::connect(&provider).await.ok()?;
+            ld.start_session(&provider.get_pairing_file().await.ok()?).await.ok()?;
+            let class = ld.get_value(Some("DeviceClass"), None).await.ok()?;
+            class.as_string().map(str::to_lowercase)
+        };
+        let kind = tokio::time::timeout(std::time::Duration::from_secs(3), ask).await.ok().flatten();
+        out.push((d.udid, kind));
+    }
+    for udid in paired_udids() {
+        if std::env::var("PHONE_IP").is_ok() && !out.iter().any(|(u, _)| *u == udid) {
+            out.push((udid, None));
+        }
+    }
+    out
+}
+
+// nothing reachable: say why
+fn none_around() -> String {
+    if paired_udids().is_empty() {
+        "no phone plugged in and no pairing file in .pairing/. run scripts/setup.sh first".into()
+    } else {
+        "no iphone or ipad around. plug it in or unlock it (wifi sync only lists awake devices), \
+         or set PHONE_IP to reach a paired one over wifi"
+            .into()
+    }
+}
+
+// UDID wins, then DEVICE=iphone|ipad, then the only device around. it never guesses between two.
+// `how` says how to choose, which differs for the cli and the mcp
+async fn pick(udid: Option<String>, kind: Option<&str>, how: &str) -> Result<String, String> {
+    if let Some(u) = udid {
+        return Ok(u);
+    }
+    let found = devices().await;
+    let list = found
+        .iter()
+        .map(|(u, k)| format!("{} {u}", k.as_deref().unwrap_or("device")))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let pool: Vec<_> = match kind {
+        Some(k) => found.iter().filter(|(_, c)| c.as_deref() == Some(&k.to_lowercase())).collect(),
+        None => found.iter().collect(),
+    };
+    if found.is_empty() {
+        return Err(none_around());
+    }
+    match (pool.as_slice(), kind) {
+        ([one], _) => Ok(one.0.clone()),
+        (_, None) => Err(format!("more than one device: {list}. pick one with {how}")),
+        ([], Some(k)) => Err(format!("no {k} found. around: {list}")),
+        (_, Some(k)) => Err(format!("more than one {k}: {list}. pick one with UDID")),
+    }
 }
 
 // None when usbmuxd doesn't list the phone, or the usb tunnel won't open
-async fn usb(udid: Option<&str>) -> Option<(AdapterHandle, RsdHandshake, String)> {
+async fn usb(udid: &str) -> Option<(AdapterHandle, RsdHandshake)> {
     let mut mux = UsbmuxdConnection::default().await.ok()?;
     let devs = mux.get_devices().await.ok()?;
-    let dev = match udid {
-        Some(want) => devs.into_iter().find(|d| d.udid == want)?,
-        None => devs.into_iter().next()?,
-    };
+    let dev = devs.into_iter().find(|d| d.udid == udid)?;
     let provider = dev.to_provider(UsbmuxdAddr::default(), "phone-control");
     let attempt = async {
         let proxy = CoreDeviceProxy::connect(&provider).await.map_err(|e| e.to_string())?;
@@ -230,7 +295,7 @@ async fn usb(udid: Option<&str>) -> Option<(AdapterHandle, RsdHandshake, String)
         Ok::<_, String>((adapter, handshake))
     };
     match tokio::time::timeout(std::time::Duration::from_secs(10), attempt).await {
-        Ok(Ok((adapter, handshake))) => Some((adapter, handshake, dev.udid)),
+        Ok(Ok((adapter, handshake))) => Some((adapter, handshake)),
         Ok(Err(e)) => {
             eprintln!("usb tunnel failed ({e}), trying wifi");
             None
@@ -368,7 +433,15 @@ async fn main() {
         return;
     }
 
-    let mut phone = match Phone::connect(udid).await {
+    let kind = std::env::var("DEVICE").ok();
+    let picked = match pick(udid, kind.as_deref(), "DEVICE=iphone, DEVICE=ipad or UDID").await {
+        Ok(u) => u,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    };
+    let mut phone = match Phone::connect(picked).await {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{e}");
