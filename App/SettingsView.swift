@@ -113,7 +113,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Anthropic API key")
                 } footer: {
-                    Text("kept in the keychain on this iPhone. used when signed out of claude.")
+                    Text("kept in the keychain on this \(Device.name). used when signed out of claude.")
                 }
 
                 Section("Agent") {
@@ -123,7 +123,7 @@ struct SettingsView: View {
                         LabeledContent {
                             Text(control.phase.label)
                         } label: {
-                            Label("iPhone Control", systemImage: "hand.tap")
+                            Label("\(Device.name) Control", systemImage: "hand.tap")
                         }
                     }
                 }
@@ -182,7 +182,7 @@ struct ControlView: View {
                     Button("Turn Off", role: .destructive) { control.stop() }
                 }
             } footer: {
-                Text("Starts a UI test runner on this iPhone through a local VPN, so the agent can see the screen and tap anywhere. iOS asks for your passcode each time it starts.")
+                Text("Starts a UI test runner on this \(Device.name) through a local VPN, so the agent can see the screen and tap anywhere. iOS asks for your passcode each time it starts.")
             }
 
             Section {
@@ -200,7 +200,7 @@ struct ControlView: View {
             }
 
         }
-        .navigationTitle("iPhone Control")
+        .navigationTitle("\(Device.name) Control")
         .navigationBarTitleDisplayMode(.inline)
         .fileImporter(isPresented: $importing, allowedContentTypes: [.propertyList, .xml, .data]) { result in
             if case .success(let url) = result { control.importPairing(from: url) }

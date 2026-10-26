@@ -12,13 +12,13 @@ enum Tools {
     static let defs: [[String: Any]] = [
         [
             "name": "phone_look",
-            "description": "Screenshot the iPhone and list the readable elements of the app in front, each with a tap point. Coordinates are screen points and match the screenshot pixels.",
+            "description": "Screenshot the \(Device.name) and list the readable elements of the app in front, each with a tap point. Coordinates are screen points and match the screenshot pixels.",
             "input_schema": ["type": "object", "properties": [String: Any]()],
         ],
         [
             "name": "phone_act",
             "description": """
-            Do one thing on the iPhone, then get a fresh screenshot back.
+            Do one thing on the \(Device.name), then get a fresh screenshot back.
             tap / double_tap / long_press: x, y (long_press takes optional seconds).
             swipe: drag from x, y to to_x, to_y. Swipe upward to scroll down.
             type: types text into the focused field. Tap the field first.
@@ -49,7 +49,7 @@ enum Tools {
         ],
         [
             "name": "phone_apps",
-            "description": "List the apps on the iPhone with their bundle ids.",
+            "description": "List the apps on the \(Device.name) with their bundle ids.",
             "input_schema": ["type": "object", "properties": [String: Any]()],
         ],
         [
@@ -102,7 +102,7 @@ enum Tools {
         if await c.ensureOn() { return nil }
         if Task.isCancelled { return fail("Stopped by the user.") }
         let why = c.message.isEmpty ? "" : " (\(c.message))"
-        return fail("iPhone Control isn't on\(why). Tell the user to tap the model name at the top of the chat, then iPhone Control, and turn it on.")
+        return fail("\(Device.name) Control isn't on\(why). Tell the user to tap the model name at the top of the chat, then \(Device.name) Control, and turn it on.")
     }
 
     private static func look(prefix: String = "") async -> Output {

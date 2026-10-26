@@ -12,6 +12,8 @@ struct ChatView: View {
     // only follow new messages when the user is already at the bottom
     @State private var atBottom = true
     @FocusState private var typing: Bool
+    // one readable column. on an iphone the screen is narrower, on an ipad the chat sits in the middle
+    private let column: CGFloat = 720
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -44,6 +46,8 @@ struct ChatView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
+                .frame(maxWidth: column)
+                .frame(maxWidth: .infinity)
             }
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
@@ -82,7 +86,7 @@ struct ChatView: View {
         ZStack(alignment: .topTrailing) {
             Button { settings = true } label: {
                 VStack(spacing: 5) {
-                    Image(systemName: "iphone.gen3")
+                    Image(systemName: Device.symbol)
                         .accessibilityHidden(true)
                         .font(.system(size: 17, weight: .medium))
                         .foregroundStyle(.white)
@@ -121,10 +125,13 @@ struct ChatView: View {
             // starting over mid-run would mix the old run into the new chat
             .opacity(agent.items.isEmpty || agent.running ? 0.4 : 1)
             .disabled(agent.items.isEmpty || agent.running)
+            .keyboardShortcut("n", modifiers: .command)
             .accessibilityLabel("New chat")
             .padding(.top, 3)
             .padding(.trailing, 16)
         }
+        .frame(maxWidth: column)
+        .frame(maxWidth: .infinity)
         .padding(.top, 2)
         .padding(.bottom, 6)
         // the header floats over the chat, so it stops growing at the big accessibility sizes
@@ -133,7 +140,7 @@ struct ChatView: View {
 
     private var empty: some View {
         VStack(spacing: 6) {
-            Text("Tell it what to do on your iPhone.")
+            Text("Tell it what to do on your \(Device.name).")
                 .foregroundStyle(.secondary)
             Text("It can open apps, tap, type and scroll.")
                 .font(.footnote)
@@ -228,6 +235,8 @@ struct ChatView: View {
         .frame(minHeight: 40)
         .glassEffect(in: .rect(cornerRadius: 20))
         .padding(.horizontal, 12)
+        .frame(maxWidth: column)
+        .frame(maxWidth: .infinity)
         .padding(.bottom, 6)
         .animation(.easeOut(duration: 0.15), value: agent.running)
     }

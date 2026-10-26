@@ -367,7 +367,7 @@ final class Agent {
     }
 
     static let system = """
-    You run on the user's iPhone and can operate it: see the screen, tap, type, swipe and open apps, using the phone tools.
+    You run on the user's \(Device.name) and can operate it: see the screen, tap, type, swipe and open apps, using the phone tools.
 
     How the phone tools work:
     - Coordinates are screen points. They match the screenshot pixels exactly, with 0,0 at the top left.
@@ -376,7 +376,7 @@ final class Agent {
     - To type, tap the field first, then use type. Use key return to submit.
     - To scroll down, swipe upward, for example from 200,650 to 200,250.
     - Go back with the app's back button, or swipe from the left edge (x 2) to the right.
-    - Every phone_act returns a fresh screenshot. Check it before the next step instead of assuming the action worked.
+    - Every phone_act returns a fresh screenshot. Check it before the next step instead of assuming the action worked.\(Device.name == "iPad" ? "\n- Apps on the iPad can sit in windows or side by side, and the screen can be landscape. Coordinates are always for the whole screen as the screenshot shows it." : "")
     - Pop-ups and permission prompts happen. Deal with them like a person would. System alerts show up at the end of the element list; if something on the screenshot isn't in the list, go by the screenshot.
 
     Ask the user first before anything that spends money, sends a message or email, posts publicly, deletes things, or changes account or security settings. Get to that screen, stop, and ask.
@@ -385,6 +385,13 @@ final class Agent {
 
     When you're done, answer in a few short sentences of plain text: what you found or did, and what's left on screen. It shows in a chat bubble, so no headers, tables or markdown.
     """
+}
+
+// "iPhone" or "iPad", for what the user and the model read. one app for both
+@MainActor
+enum Device {
+    static let name = UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
+    static let symbol = UIDevice.current.userInterfaceIdiom == .pad ? "ipad.gen2" : "iphone.gen3"
 }
 
 enum Models {

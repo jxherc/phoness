@@ -7,9 +7,9 @@
 >
 > **the claude sign-in can get your claude account limited or banned.** it signs in with claude code's own oauth client and tells the api it's claude code, because that's the only way subscription requests go through. anthropic [limits subscription logins to its own apps](https://code.claude.com/docs/en/legal-and-compliance), so this goes against that. it's here because it works, not because it's allowed. use an api key if your account matters to you.
 >
-> only tried on one iphone so far (16 pro, ios 27.0.1).
+> only tried on one iphone so far (16 pro, ios 27.0.1). the same app installs on an ipad, but hasn't run a task there yet.
 
-an agent that runs on the iphone and drives any app on it. it looks at the screen, taps, types and swipes. after a one-time setup it's meant to need no computer at all.
+an agent that runs on the iphone or ipad and drives any app on it. it looks at the screen, taps, types and swipes. after a one-time setup it's meant to need no computer at all.
 
 remake of [finn voorhees' demo](https://x.com/finnvoorhees/status/2108279639538012265).
 
@@ -22,7 +22,7 @@ remake of [finn voorhees' demo](https://x.com/finnvoorhees/status/21082796395380
 - `launcher/` rust static lib on top of [idevice](https://github.com/jkcoxson/idevice). it starts that runner on the phone itself: through the vpn it opens a remote pairing tunnel to the phone's own `remotepairingd` (what xcode uses over wifi), mounts the developer disk image if needed, then launches the runner through testmanagerd, all inside that tunnel. that's where the "Enter iPhone Passcode for XCTest" prompt comes from. iOS 27 lockdownd drops connections that come through a vpn, so the old lockdownd route is gone ([why](wiki/lessons/ios27-lockdownd-vpn.md)).
 - `Tunnel/` loopback packet tunnel. packets to `10.7.0.1` get src and dst swapped and go straight back in, so the phone's services see a computer calling from outside. same trick as localdevvpn and stosvpn, which stikdebug uses. on a free apple account the app uses localdevvpn instead (see setup).
 - `setup/` small mac tool, run once. makes the remote pairing file inside a usb tunnel to the phone, with its own identity, so the app's pairing is separate from the mac's. the first time, the phone may ask to trust this computer.
-- `control/` a separate mac tool (`phone`) that drives the phone straight from this machine over usb, no on-device app and no vpn. screenshot, tap, swipe, type, hardware buttons, through coredevice (what xcode's device hub uses), so it works on the lock screen too. see [control/README.md](control/README.md). this is for driving and testing the phone from the mac; the app above is the on-device agent.
+- `control/` a separate mac tool (`phone`) that drives the phone straight from this machine over usb, no on-device app and no vpn. screenshot, tap, swipe, type, hardware buttons, through coredevice (what xcode's device hub uses), so it works on the lock screen too. see [control/README.md](control/README.md). it drives an ipad too; with both around, say which with `DEVICE=iphone` or `DEVICE=ipad`. this is for driving and testing the phone from the mac; the app above is the on-device agent.
 - `plugin/` the same `phone` tool as mcp tools for claude code. claude gets the screenshots as images and taps on them. install it with `/plugin install phone --marketplace jxherc/phoness`. it runs `phone mcp`, so build `control/` and put `phone` on your PATH first, since the plugin doesn't ship the binary.
 
 ## setup
@@ -32,13 +32,13 @@ you need:
 - xcode 27 and xcodegen
 - rust through rustup. `rust-toolchain.toml` pins the version and the ios targets, rustup fetches them on the first build
 - an apple account. a free one works: free teams can't sign the built-in vpn, so the app uses [LocalDevVPN](https://apps.apple.com/app/id6755608044) (free, app store) instead. a paid developer account lets it use its own
-- an iphone on ios 26 or later, with developer mode on, that trusts this mac, and wifi on (remotepairingd needs it)
+- an iphone or ipad on ios 26 or later, with developer mode on, that trusts this mac, and wifi on (remotepairingd needs it)
 
 [idevice](https://github.com/jkcoxson/idevice) is vendored in `launcher/idevice`: commit 26a28f6 plus one patch (`XCUITestService::run_rsd`), so xctest can start over a remote pairing tunnel.
 
 building under your own team: change `DEVELOPMENT_TEAM` and `AGENT_BUNDLE_ID` at the top of `project.yml`. the tunnel, runner and background task ids all follow from `AGENT_BUNDLE_ID`.
 
-then with the phone plugged in and unlocked:
+then with the iphone or ipad plugged in and unlocked:
 
 ```bash
 ./scripts/setup.sh
@@ -50,11 +50,11 @@ on a free account:
 FREE_ACCOUNT=1 ./scripts/setup.sh
 ```
 
-that build leaves out the vpn entitlement. install LocalDevVPN and turn it on before iPhone Control > Turn On. apps signed by a free account stop opening after 7 days, so run the script again then.
+that build leaves out the vpn entitlement. install LocalDevVPN and turn it on before iPhone Control (iPad Control on an ipad) > Turn On. apps signed by a free account stop opening after 7 days, so run the script again then.
 
-it writes the remote pairing file to `.pairing/<udid>.plist` (readable only by you), copies the developer disk image from xcode into `App/Resources/Device/DDI/`, builds, installs the app and the runner, and then copies the pairing file into the app's own storage on the phone. the pairing file is a paired-host credential for the phone, so it never goes into the app bundle or git, and the app keeps it out of backups. a pairing file from an older setup (the lockdown kind) is refused with "run scripts/setup.sh again". with more than one phone: `UDID=<udid> ./scripts/setup.sh`.
+it writes the remote pairing file to `.pairing/<udid>.plist` (readable only by you), copies the developer disk image from xcode into `App/Resources/Device/DDI/`, builds, installs the app and the runner, and then copies the pairing file into the app's own storage on the phone. the pairing file is a paired-host credential for the phone, so it never goes into the app bundle or git, and the app keeps it out of backups. a pairing file from an older setup (the lockdown kind) is refused with "run scripts/setup.sh again". with an iphone and an ipad around it won't guess: `DEVICE=ipad ./scripts/setup.sh` (or `DEVICE=iphone`, or `UDID=<udid>`).
 
-on the phone: open Agent, tap the model name, add an anthropic api key or use the experimental claude sign-in below, then iPhone Control > Turn On. allow the vpn and type your passcode when iOS asks for "XCTest".
+on the device: open Agent, tap the model name, add an anthropic api key or use the experimental claude sign-in below, then iPhone Control (iPad Control on an ipad) > Turn On. allow the vpn and type your passcode when iOS asks for "XCTest".
 
 ## claude sign-in
 
@@ -77,6 +77,7 @@ this is an experimental compatibility flow using claude's public cli oauth clien
 ## limits
 
 - the on-device start (vpn, remote pairing tunnel, disk image check, runner launch) ran on an iphone 16 pro on ios 27.0.1 on 2026-10-20. the disk image was already mounted there, so the mount step itself hasn't run on a phone yet. a full run on the same phone worked on 2026-10-21 (the demo above): it switched to the weather app, kept going in the background under the "Replying" task, and answered. other phones and ios versions are untested.
+- it's one app for iphone and ipad. on 2026-10-26, in the ipad simulator (11-inch, ios 27.0), the chat was checked in portrait, landscape and a small window, and the runner's look and taps were checked in all three, including an app in a window away from the corner. on a real ipad pro (ios 27.0.1) it's installed, but it hasn't been turned on or run a task.
 - each runner start asks for the passcode. ios drops the runner when the app's testmanagerd connection goes away, for example when the app gets killed. the next message starts it again.
 - the runner uses private api. it skips xctest's wait-for-idle like webdriveragent does, asks xctest's accessibility client which app is in front, and falls back to `LSApplicationWorkspace` for the app list (on the phone the list comes from installation_proxy). a new xcode can break any of these, the code checks each step and falls back.
 - the runner's token is fresh for every start, from the app and from `examples/mac.rs`. a runner started from xcode uses the fixed `dev` token, so while that one is up any app on the phone could drive it. that's for development only. the runner only listens on 127.0.0.1 and refuses other host names, so web pages can't reach it through dns rebinding.

@@ -174,7 +174,7 @@ final class Control {
         }
         guard let rpPort = await Self.remotePairingPort() else {
             if Task.isCancelled { return }
-            return fail("Can't reach the phone's remote pairing service. It needs Wi-Fi on. Turn it on and try again.")
+            return fail("Can't reach this \(Device.name)'s remote pairing service. It needs Wi-Fi on. Turn it on and try again.")
         }
 
         Runner.token = UUID().uuidString

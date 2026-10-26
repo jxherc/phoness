@@ -12,7 +12,7 @@ settings:
     AGENT_BUNDLE_ID: com.jxherc.agent
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "5.0"
-    TARGETED_DEVICE_FAMILY: "1"
+    TARGETED_DEVICE_FAMILY: "1,2"
     MARKETING_VERSION: "1.0"
     CURRENT_PROJECT_VERSION: "1"
     # the rust launcher only builds aarch64-apple-ios-sim, so skip the intel simulator slice

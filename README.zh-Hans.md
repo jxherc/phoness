@@ -7,9 +7,9 @@
 >
 > **用 claude 登录可能会让你的 claude 账号被限制或封号。** 它用 claude code 自己的 oauth client 登录，并告诉 api 自己是 claude code，因为只有这样订阅请求才能通过。anthropic [规定订阅账号只能登录它自家的应用](https://code.claude.com/docs/en/legal-and-compliance)，所以这样做是违反规定的。留着它是因为能用，不是因为允许这么做。如果你在乎自己的账号，就用 api key。
 >
-> 目前只在一台 iphone 上试过（16 pro，ios 27.0.1）。
+> 目前只在一台 iphone 上试过（16 pro，ios 27.0.1）。同一个 app 也能装到 ipad 上，但还没在 ipad 上跑过任务。
 
-一个跑在 iphone 上的 agent，能操作手机上的任何 app。它会看屏幕、点击、打字和滑动。一次性配置好之后，按设计完全不需要电脑。
+一个跑在 iphone 或 ipad 上的 agent，能操作设备上的任何 app。它会看屏幕、点击、打字和滑动。一次性配置好之后，按设计完全不需要电脑。
 
 复刻自 [finn voorhees 的 demo](https://x.com/finnvoorhees/status/2108279639538012265)。
 
@@ -22,7 +22,7 @@
 - `launcher/` 是基于 [idevice](https://github.com/jkcoxson/idevice) 的 rust 静态库。它直接在手机上启动这个 runner：先通过 vpn 建一条到手机自己的 `remotepairingd` 的 remote pairing 隧道（xcode 走 wifi 时用的就是它），需要的话挂载开发者磁盘镜像，然后通过 testmanagerd 启动 runner，全程都在这条隧道里。“Enter iPhone Passcode for XCTest”这个提示就是这么来的。iOS 27 的 lockdownd 会断掉从 vpn 进来的连接，所以以前走 lockdownd 的路子已经不通了（[原因](wiki/lessons/ios27-lockdownd-vpn.md)）。
 - `Tunnel/` 是回环的 packet tunnel。发往 `10.7.0.1` 的包会把 src 和 dst 对调，再直接送回去，这样手机上的服务看到的就是一台从外面连进来的电脑。localdevvpn 和 stosvpn 用的也是这招，stikdebug 用的就是它们。用免费 apple 账号时，app 会改用 localdevvpn（见“安装”）。
 - `setup/` 是一个小的 mac 工具，只跑一次。它在连到手机的 usb 隧道里生成 remote pairing 文件，用的是自己单独的身份，所以 app 的配对和 mac 的配对是分开的。第一次运行时，手机可能会问你要不要信任这台电脑。
-- `control/` 是另一个独立的 mac 工具（`phone`），直接从这台机器通过 usb 操作手机，不需要手机上的 app，也不需要 vpn。截图、点击、滑动、打字、硬件按键都走 coredevice（xcode 的 device hub 用的就是它），所以锁屏时也能用。见 [control/README.md](control/README.md)。它是用来从 mac 操作和测试手机的；上面那个 app 才是跑在手机上的 agent。
+- `control/` 是另一个独立的 mac 工具（`phone`），直接从这台机器通过 usb 操作手机，不需要手机上的 app，也不需要 vpn。截图、点击、滑动、打字、硬件按键都走 coredevice（xcode 的 device hub 用的就是它），所以锁屏时也能用。见 [control/README.md](control/README.md)。它也能操作 ipad；两台都在的话，用 `DEVICE=iphone` 或 `DEVICE=ipad` 指定是哪台。它是用来从 mac 操作和测试手机的；上面那个 app 才是跑在手机上的 agent。
 - `plugin/` 把同一个 `phone` 工具做成 claude code 的 mcp 工具。claude 直接拿到截图，看着图点。用 `/plugin install phone --marketplace jxherc/phoness` 安装。它运行的是 `phone mcp`，所以要先构建 `control/`，再把 `phone` 放进 PATH，因为插件里不带二进制文件。
 
 ## 安装
@@ -32,13 +32,13 @@
 - xcode 27 和 xcodegen
 - 通过 rustup 安装的 rust。`rust-toolchain.toml` 锁定了版本和 ios target，第一次构建时 rustup 会自动拉取
 - 一个 apple 账号。免费的也行：免费 team 签不了内置的 vpn，所以 app 会改用 [LocalDevVPN](https://apps.apple.com/app/id6755608044)（免费，app store 上有）。付费开发者账号就能用 app 自带的
-- 一台 ios 26 或更高版本的 iphone，打开开发者模式，信任这台 mac，并且打开 wifi（remotepairingd 需要）
+- 一台 ios 26 或更高版本的 iphone 或 ipad，打开开发者模式，信任这台 mac，并且打开 wifi（remotepairingd 需要）
 
 [idevice](https://github.com/jkcoxson/idevice) 的源码直接放在 `launcher/idevice` 里：基于 commit 26a28f6，加了一个补丁（`XCUITestService::run_rsd`），这样 xctest 就能通过 remote pairing 隧道启动。
 
 用你自己的 team 构建：改 `project.yml` 顶部的 `DEVELOPMENT_TEAM` 和 `AGENT_BUNDLE_ID`。tunnel、runner 和后台任务的 id 都是根据 `AGENT_BUNDLE_ID` 生成的。
 
-然后插上手机并解锁：
+然后插上 iphone 或 ipad 并解锁：
 
 ```bash
 ./scripts/setup.sh
@@ -50,11 +50,11 @@
 FREE_ACCOUNT=1 ./scripts/setup.sh
 ```
 
-这样构建出来的版本不带 vpn entitlement。在点 iPhone Control > Turn On 之前，先装好 LocalDevVPN 并打开它。免费账号签名的 app 7 天后就打不开了，到时候再跑一遍脚本就行。
+这样构建出来的版本不带 vpn entitlement。在点 iPhone Control（ipad 上是 iPad Control）> Turn On 之前，先装好 LocalDevVPN 并打开它。免费账号签名的 app 7 天后就打不开了，到时候再跑一遍脚本就行。
 
-脚本会把 remote pairing 文件写到 `.pairing/<udid>.plist`（只有你能读），把 xcode 里的开发者磁盘镜像复制到 `App/Resources/Device/DDI/`，构建并安装 app 和 runner，最后把配对文件复制到手机上 app 自己的存储里。配对文件相当于这台手机的已配对主机凭证，所以它永远不会进 app bundle 或 git，app 也会把它排除在备份之外。旧版配置生成的配对文件（lockdown 那种）会被拒绝，并提示“run scripts/setup.sh again”。有多台手机的话：`UDID=<udid> ./scripts/setup.sh`。
+脚本会把 remote pairing 文件写到 `.pairing/<udid>.plist`（只有你能读），把 xcode 里的开发者磁盘镜像复制到 `App/Resources/Device/DDI/`，构建并安装 app 和 runner，最后把配对文件复制到手机上 app 自己的存储里。配对文件相当于这台手机的已配对主机凭证，所以它永远不会进 app bundle 或 git，app 也会把它排除在备份之外。旧版配置生成的配对文件（lockdown 那种）会被拒绝，并提示“run scripts/setup.sh again”。iphone 和 ipad 都在的话，脚本不会自己猜：用 `DEVICE=ipad ./scripts/setup.sh`（或者 `DEVICE=iphone`，或者 `UDID=<udid>`）。
 
-在手机上：打开 Agent，点模型名，添加 anthropic api key 或者用下面实验性的 claude 登录，然后点 iPhone Control > Turn On。允许添加 vpn，iOS 为“XCTest”要密码时输入你的密码。
+在设备上：打开 Agent，点模型名，添加 anthropic api key 或者用下面实验性的 claude 登录，然后点 iPhone Control（ipad 上是 iPad Control）> Turn On。允许添加 vpn，iOS 为“XCTest”要密码时输入你的密码。
 
 ## claude 登录
 
@@ -77,6 +77,7 @@ FREE_ACCOUNT=1 ./scripts/setup.sh
 ## 限制
 
 - 设备端启动（vpn、remote pairing 隧道、磁盘镜像检查、runner 启动）在 2026-10-20 于一台 ios 27.0.1 的 iphone 16 pro 上跑过。那台手机上的磁盘镜像本来就已经挂载了，所以挂载这一步本身还没在手机上跑过。2026-10-21 在同一台手机上完整跑通了一次（就是上面的 demo）：它切到天气 app，在“Replying”任务下继续在后台工作，然后给出了回答。其他手机和 ios 版本都没测过。
+- iphone 和 ipad 用的是同一个 app。2026-10-26 在 ipad 模拟器（11 寸，ios 27.0）上检查了竖屏、横屏和小窗口下的聊天界面，也在这三种情况下检查了 runner 的截图和点击，包括 app 开在不贴角的窗口里的情况。真机 ipad pro（ios 27.0.1）上已经装好，但还没打开 iPad Control，也没跑过任务。
 - 每次启动 runner 都要输密码。app 的 testmanagerd 连接一断（比如 app 被杀掉），ios 就会丢掉 runner。下一条消息会重新启动它。
 - runner 用了私有 api。它像 webdriveragent 那样跳过 xctest 的 wait-for-idle，通过 xctest 的 accessibility client 查前台是哪个 app，app 列表则回退用 `LSApplicationWorkspace` 获取（在手机上列表来自 installation_proxy）。新版 xcode 可能会让其中任何一项失效，代码会逐步检查并回退。
 - 不管从 app 还是从 `examples/mac.rs` 启动，runner 每次的 token 都是新的。从 xcode 启动的 runner 用固定的 `dev` token，所以它运行期间，手机上任何 app 都能操作它。这只用于开发。runner 只监听 127.0.0.1，并拒绝其他主机名，所以网页没法通过 dns rebinding 访问它。

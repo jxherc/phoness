@@ -1,12 +1,12 @@
 #!/bin/zsh
-# one time, with the iphone unlocked and trusting this mac (a cable is best):
+# one time, with the iphone or ipad unlocked and trusting this mac (a cable is best):
 #   1. makes a remote pairing file so the phone can open a tunnel to itself later
 #   2. copies the developer disk image out of xcode (has testmanagerd + XCTest)
 #   3. builds the app + runner for the phone and installs both
 #   4. puts the pairing file into the app's own storage on the phone
 # after this the mac isn't needed.
 #
-# more than one phone? UDID=<udid> ./scripts/setup.sh
+# an iphone and an ipad around? DEVICE=ipad ./scripts/setup.sh (or DEVICE=iphone, or UDID=<udid>)
 # free apple account (personal team)? FREE_ACCOUNT=1 ./scripts/setup.sh
 #   free teams can't sign the built-in vpn, so the build leaves its entitlement out
 #   and the app uses LocalDevVPN from the app store instead.
@@ -29,9 +29,23 @@ echo "xcode: $(xcodebuild -version | head -1)"
 export PATH="$HOME/.cargo/bin:$PATH"
 
 bundle=$(awk '/AGENT_BUNDLE_ID:/ {print $2; exit}' project.yml)
-udid=${UDID:-$(xcrun devicectl list devices 2>/dev/null | awk '/iPhone/ && /physical/ && !/unavailable/ {for(i=1;i<=NF;i++) if ($i ~ /^[0-9A-F]{8}-[0-9A-F]{16}$/) print $i}' | head -1)}
-[[ -z "$udid" ]] && { echo "no iphone found. plug it in, unlock it, trust this mac."; exit 1; }
-echo "phone: $udid"
+# "iphone <udid>" / "ipad <udid>" per connected device, by the product type in the model column
+devs=$(xcrun devicectl list devices 2>/dev/null | awk '/physical/ && !/unavailable/ {
+  kind = ($0 ~ /\(iPad[0-9]/) ? "ipad" : ($0 ~ /\(iPhone[0-9]/) ? "iphone" : ""
+  for (i = 1; i <= NF; i++) if (kind != "" && $i ~ /^[0-9A-F]{8}-[0-9A-F]{16}$/) print kind, $i
+}')
+if [[ -n "$UDID" ]]; then
+  udid=$UDID
+else
+  # one device, or the one DEVICE names. never a guess between two
+  pool=$(print -r -- "$devs" | awk -v k="${DEVICE:l}" 'NF && (k == "" || $1 == k)')
+  n=$(print -r -- "$pool" | awk 'NF' | wc -l | tr -d ' ')
+  (( n == 0 )) && { echo "no ${DEVICE:-iphone or ipad} found. plug it in, unlock it, trust this mac."; exit 1; }
+  (( n > 1 )) && { echo "more than one device:\n$pool\npick one with DEVICE=iphone, DEVICE=ipad or UDID=<udid>"; exit 1; }
+  udid=$(print -r -- "$pool" | awk 'NF {print $2}')
+fi
+[[ "$(print -r -- "$devs" | awk -v u=$udid '$2 == u {print $1}')" == ipad ]] && name=iPad || name=iPhone
+echo "device: $name $udid"
 
 echo "\n== pairing file"
 # a paired-host credential for the phone, so it lives outside the app bundle and git.
@@ -86,18 +100,18 @@ if xcrun devicectl device copy to --device $udid --domain-type appDataContainer 
   --source $pairing --destination "Library/Application Support/pairing.plist" -q 2>/dev/null; then
   echo "copied"
 else
-  echo "couldn't copy it, the phone was probably locked. unlock it and run this again."
+  echo "couldn't copy it, the $name was probably locked. unlock it and run this again."
   echo "(an app that already had a pairing file keeps using it)"
   exit 1
 fi
 
-cat <<'MSG'
+cat <<MSG
 
-done. on the phone:
+done. on the $name:
   1. Settings > Privacy & Security > Developer Mode stays on
   2. open Agent, tap the model name, add your Anthropic API key (or sign in)
-  3. keep wifi on, the phone's remote pairing service needs it
-  4. iPhone Control > Turn On. allow the VPN, then enter your passcode for "XCTest"
+  3. keep wifi on, the $name's remote pairing service needs it
+  4. $name Control > Turn On. allow the VPN, then enter your passcode for "XCTest"
   5. you can unplug now
 MSG
 if [[ "$FREE_ACCOUNT" == 1 ]]; then
